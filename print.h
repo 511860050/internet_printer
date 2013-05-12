@@ -39,6 +39,7 @@ public:
 
   void run();
 private:
+  int checkFile(char *fileName);
   int makeConnectToPrintd();
   char *getPrintdName();
   int submitFile(int sockFd);

@@ -19,6 +19,25 @@
 
 #define FILE_DIRECTORY "/home/chenhuan/Hello_World/internet_print/"
 
+int PRINT_WORK_LIST;
+#define PRINT_ON 0
+#define PRINT_OFF 1
+
+pthread_mutex_t threadLock;  //thread lock
+
+//=============================================
+/**
+*sig_usr_1 to receive the SIGUSR1
+*set the PRINT_WORK_LIST to be OVER
+*the PrintDaemon can be killed
+*/
+void sig_usr_1(int sigusr1)
+{
+  syslog(LOG_INFO , "Here am I");
+  extern int PRINT_WORK_LIST;
+  PRINT_WORK_LIST = PRINT_ON;
+}
+
 //=============================================
 /**
 *the class of PrintDaemon
@@ -27,6 +46,19 @@
 */
 class PrintDaemon
 {
+private:
+  struct WorkInfo
+  {
+    char *fileName_;
+    WorkInfo(char *fileName)
+      :fileName_(fileName) {}
+  }; 
+private:
+  struct ThreadParam
+  {
+    PrintDaemon *me_;
+    int clientFd_;
+  };
 public:
   PrintDaemon(char *processName)
     :processName_(processName) {}
@@ -34,9 +66,15 @@ public:
   void run();
 private:
   int makeListen();
+
+  static void *receiveFileThread(void *threadParam);
   int receiveFile(int clientFd);
+
+  static void *printWorkListThread(void *printd);
+  void printWorkList();
 private:
   char *processName_;  //name pf process to initialize daemon
+  list<WorkInfo> workList_; //list to hold work informations
 }; //end of PrintDaemon
 
 #endif

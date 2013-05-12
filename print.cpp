@@ -18,6 +18,9 @@
 void Print::run()
 {
   int sockFd; 
+  
+  if(checkFile(fileName_) != 0)
+    error("error in checkFile");
 
   if((sockFd = makeConnectToPrintd()) < 0)
     error("error in makeConenctToPrintd");
@@ -26,6 +29,29 @@ void Print::run()
     error("error in submitFile");
 
   close(sockFd);
+}
+
+//============================================
+/**
+*check if file exist and it is a regular file
+*return value : 0 = success
+*/
+int Print::checkFile(char *fileName)
+{
+  struct stat fileInfo;
+
+  //check if the file exist
+  if(stat(fileName_ , &fileInfo) < 0)
+  {
+    perror("file is not exist");
+    return -1;
+  }
+  if(!S_ISREG(fileInfo.st_mode))
+  {
+    perror("is not a regular file");
+    return -1;
+  }
+  return 0;
 }
 
 //============================================
@@ -90,28 +116,10 @@ int Print::makeConnectToPrintd()
 */
 int Print::submitFile(int sockFd)
 {
-
   int fd;
-  int fileSize;
   int readLen;
   int writeLen;
-  struct stat fileInfo;
   char buffer[IO_SIZE];
-
-
-  //check if the file exist
-  if(stat(fileName_ , &fileInfo) < 0)
-  {
-    perror("file is not exist");
-    return -1;
-  }
-  if(!S_ISREG(fileInfo.st_mode))
-  {
-    perror("is not a regular file");
-    return -1;
-  }
-
-  fileSize = fileInfo.st_size; 
 
   //sumbit the file to printd
   if((fd = open(fileName_ , O_RDONLY)) < 0)

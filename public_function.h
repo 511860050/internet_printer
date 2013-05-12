@@ -11,6 +11,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <list>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,7 @@
 #include <strings.h>
 #include <string.h>
 #include <syslog.h>
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -32,7 +34,7 @@ using namespace std;
 /**
 *all kinds of define
 */
-#define SIMPLE_SIZE 50 //simple buffer size to read simple message 
+#define SIMPLE_SIZE 150 //simple buffer size to read simple message 
 #define IO_SIZE 4096 //buffer size in I/O file 
 
 #ifndef HOST_NAME_MAX  
@@ -75,6 +77,15 @@ void sig_chld(int sigchld)
     pid = waitpid(-1 , &stat , WNOHANG);
     if(pid <= 0) break;
   }
+}
+
+//==============================================
+/**
+*sig_segv to report error 
+*/
+void sig_segv(int sigsegv)
+{
+  error("sorry");
 }
 
 //==============================================
