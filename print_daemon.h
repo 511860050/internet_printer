@@ -18,6 +18,7 @@
 #define LISTEN_QUEUE 10
 
 #define FILE_DIRECTORY "/home/chenhuan/Hello_World/internet_print/"
+#define PRINT_LIST_FILE "print_work_list"
 
 int PRINT_WORK_LIST;
 #define PRINT_ON 0
@@ -33,7 +34,6 @@ pthread_mutex_t threadLock;  //thread lock
 */
 void sig_usr_1(int sigusr1)
 {
-  syslog(LOG_INFO , "Here am I");
   extern int PRINT_WORK_LIST;
   PRINT_WORK_LIST = PRINT_ON;
 }
@@ -49,8 +49,8 @@ class PrintDaemon
 private:
   struct WorkInfo
   {
-    char *fileName_;
-    WorkInfo(char *fileName)
+    string fileName_;
+    WorkInfo(string fileName)
       :fileName_(fileName) {}
   }; 
 private:

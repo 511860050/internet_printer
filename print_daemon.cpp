@@ -20,7 +20,6 @@ void PrintDaemon::run()
   int sockFd , clientFd;
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
-  pthread_t thread
   pthread_t thread;
   ThreadParam threadParam;  //too nice to say 
   extern pthread_mutex_t threadLock;
@@ -67,38 +66,51 @@ void *PrintDaemon::printWorkListThread(void *printd)
   extern int PRINT_WORK_LIST;
   PrintDaemon *thisOne;
 
+  PRINT_WORK_LIST = PRINT_OFF;
   thisOne = (PrintDaemon*)printd;
 
   while(true)
   {
-    if(PRINT_WORK_LIST == PRINT_ON);
+    if(PRINT_WORK_LIST == PRINT_ON)
     {
       if(pthread_mutex_lock(&threadLock) != 0)
         error("error in pthread_mutex_lock");
 
-      syslog(LOG_INFO , "Print work list now");
       thisOne->printWorkList();
       PRINT_WORK_LIST = PRINT_OFF;
-      syslog(LOG_INFO , "Print work list over");
 
       if(pthread_mutex_unlock(&threadLock) != 0)
         error("error in pthread_mutex_unlock");
     }
-  }
+  } 
   return NULL;
 }
 
 //============================================
 /**
 *print the workList
+*using C++ ofstream to complete it
 */
 void PrintDaemon::printWorkList()
 {
-  typedef list<WorkInfo>::const_iterator listCIter;
+  string fileName;
+  stringstream ss;
 
+  ss<<FILE_DIRECTORY<<PRINT_LIST_FILE;
+
+  ofstream ofs(ss.str().c_str());
+  if(!ofs)
+    error("error in ofs");
+
+  typedef list<WorkInfo>::const_iterator listCIter;
   for(listCIter iter = workList_.begin() ; iter != workList_.end() ; 
       ++iter)
-    syslog(LOG_INFO , "%s" , (*iter).fileName_);
+  {
+    ofs<<(*iter).fileName_<<endl;
+    if(ofs.bad() || ofs.fail())
+      error("error in ofs during write");
+  }
+  ofs.close();
 }
 
 //=============================================
@@ -129,21 +141,15 @@ void *PrintDaemon::receiveFileThread(void *threadParam)
 int PrintDaemon::receiveFile(int clientFd)
 {
   char buffer[IO_SIZE];
-  char fileName[SIMPLE_SIZE];
+  string fileName;
   int fd;
   int readLen , writeLen;
   stringstream ss;
 
-  ss << pthread_self();
-  strcpy(fileName , FILE_DIRECTORY);
-  strcat(fileName , ss.str().c_str());
+  ss << FILE_DIRECTORY<<pthread_self();
+  fileName = ss.str();
 
-  /******fuck this point******/
-  if(strlen(fileName) > SIMPLE_SIZE)  
-    error("error in reveiceFile::strcat");
-  /******fuck this point******/
-
-  if((fd = creat(fileName , S_IRUSR|S_IWUSR)) < 0) //user read and write
+  if((fd = creat(fileName.c_str() , S_IRUSR|S_IWUSR)) < 0) 
     error("error in create");
 
   workList_.push_back(WorkInfo(fileName));
@@ -155,7 +161,6 @@ int PrintDaemon::receiveFile(int clientFd)
       error("error in writen");
   }
   close(clientFd);
-
   return 0;
 }
 
