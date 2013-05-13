@@ -17,14 +17,16 @@
 
 #define LISTEN_QUEUE 10
 
-#define FILE_DIRECTORY "/home/chenhuan/Hello_World/internet_print/"
-#define PRINT_LIST_FILE "print_work_list"
+#define DIRECTORY "/home/chenhuan/Hello_World/internet_print"
+#define PRINT_FILE "file"
+#define PRINT_REQUEST "request"
+#define PRINT_LIST_FILE "work_list"
 
 int PRINT_WORK_LIST;
 #define PRINT_ON 0
 #define PRINT_OFF 1
 
-pthread_mutex_t threadLock;  //thread lock
+pthread_mutex_t work_list_lock;  //thread lock
 
 //=============================================
 /**
@@ -50,13 +52,14 @@ private:
   struct WorkInfo
   {
     string fileName_;
+
     WorkInfo(string fileName)
       :fileName_(fileName) {}
   }; 
 private:
   struct ThreadParam
   {
-    PrintDaemon *me_;
+    PrintDaemon *this_;
     int clientFd_;
   };
 public:
@@ -66,9 +69,11 @@ public:
   void run();
 private:
   int makeListen();
-
+  
   static void *receiveFileThread(void *threadParam);
+  int receivePrintRequest(int clientFd);
   int receiveFile(int clientFd);
+  int sendPrintReply(int clientFd);
 
   static void *printWorkListThread(void *printd);
   void printWorkList();

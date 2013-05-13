@@ -22,22 +22,21 @@ void PrintDaemon::run()
   socklen_t clientAddrLen;
   pthread_t thread;
   ThreadParam threadParam;  //too nice to say 
-  extern pthread_mutex_t threadLock;
+  extern pthread_mutex_t work_list_lock;
 
-  if(initializeDaemon(processName_ , 0) != 0)
-    error("error in initializeDaemon");
+//  if(initializeDaemon(processName_ , 0) != 0)
+//    error("error in initializeDaemon");
 
   if((sockFd = makeListen()) < 0)
     error("error in makeListen");
  
-  if(pthread_mutex_init(&threadLock , NULL) != 0)
+  if(pthread_mutex_init(&work_list_lock , NULL) != 0)
     error("error in pthread_mutex_init");
 
-  signal(SIGUSR1 , sig_usr_1);
-
-  //thread to receive the signal SIGUSR1 to print workList_ 
-  if(pthread_create(&thread,NULL,printWorkListThread,(void*)this) != 0)
-    error("error in pthread_create::printWorkListThread");
+  //SIGUSR1 to print the work list
+//  signal(SIGUSR1 , sig_usr_1); 
+//  if(pthread_create(&thread,NULL,printWorkListThread,(void*)this) != 0)
+//    error("error in pthread_create::printWorkListThread");
 
   while(true)
   {
@@ -45,7 +44,7 @@ void PrintDaemon::run()
     if((clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
       continue;
     
-     threadParam.me_ = this;  //too nice to say
+     threadParam.this_ = this;  //too nice to say
      threadParam.clientFd_ = clientFd;
      
      if(pthread_create(&thread,NULL ,receiveFileThread ,
@@ -53,8 +52,140 @@ void PrintDaemon::run()
        error("error in pthread_create::receiveFileThread");
    }
 
-   if(pthread_mutex_destroy(&threadLock) != 0)
+   if(pthread_mutex_destroy(&work_list_lock) != 0)
      error("error in pthread_mutex_destroy");
+}
+
+//=============================================
+/**
+*receiveFileThread using receiveFile 
+*It is the pthread function
+*/
+void *PrintDaemon::receiveFileThread(void *threadParam)
+{
+  if(pthread_mutex_lock(&work_list_lock) != 0)
+    error("error in pthread_mutex_lock");
+
+  ThreadParam *param = (ThreadParam*)threadParam;
+
+  if(param->this_->receivePrintRequest(param->clientFd_) != 0)
+    error("error in receivePrintRequest");
+
+  if(param->this_->receiveFile(param->clientFd_) != 0)
+    error("error in receiveFile");
+
+  if(param->this_->sendPrintReply(param->clientFd_) != 0)
+    error("error in sendPrintReply");
+
+  close(param->clientFd_);
+
+  if(pthread_mutex_unlock(&work_list_lock) != 0)
+    error("error in pthread_mutex_unlock");
+
+  return NULL;
+}
+
+//=============================================
+/**
+*receivePrintRequest to receive the print request
+*from the print , and to save it in pointed file
+return value : 0 = success
+*/
+int PrintDaemon::receivePrintRequest(int clientFd)
+{
+  FILE *clientFp;
+  int length;
+  char line[IO_SIZE];
+  int jobNumber;
+  string fileName;
+  stringstream ss;
+  struct PrintRequest printRequest;
+  
+  /*********receive string format PrintRequest*******/
+  //build the file name 
+  jobNumber = workList_.size();
+  ss<<DIRECTORY<<"/"<<PRINT_REQUEST<<"/"<<jobNumber;
+  fileName = ss.str();
+
+  //using ofstream to complete  
+  ofstream ofs(fileName.c_str());
+  if(!ofs)
+    error("error in receivePrintRequest::ofs");
+
+  if((clientFp = fdopen(clientFd , "r")) != NULL) 
+    error("error in receivePrintRequest::fdopen");
+
+  //what I want get is printRequest fuck you
+  while((length = fgets(line , IO_SIZE , clientFp)) > 0)
+  {
+    ofs<<line<<endl;
+  }
+
+
+
+
+
+    ofs<<printRequest;
+
+  ofs.close();
+
+  return 0;
+}
+
+//=============================================
+/**
+*receiveFile to receive the file from print process
+*store the file in local directory
+*return value : 0 = receive success
+*/
+int PrintDaemon::receiveFile(int clientFd)
+{
+  FILE *clientFp;
+  string fileName;
+  stringstream ss;
+  int c;
+
+  //bulid the file name and creat the file
+  ss<<DIRECTORY<<"/"<<PRINT_FILE<<"/"<<pthread_self();
+  fileName = ss.str();
+
+  workList_.push_back(WorkInfo(fileName));
+
+  ofstream ofs(fileName.c_str());
+  if(!ofs)
+    error("error in ifs");
+
+  if((clientFp = fdopen(clientFd , "r")) == NULL)
+    error("error in fdopen");
+
+  while((c = getc(clientFp)) != EOF)
+  {
+    ofs<<char(c);
+  }
+  ofs.close();
+
+  return 0;
+}
+
+//=============================================
+/**
+*sendPrintReply to send the PrintReply to print
+*return value : 0 = success
+*/
+int PrintDaemon::sendPrintReply(int clientFd)
+{
+  struct PrintReply printReply;
+  int length;
+  
+  printReply.resultCode_ = SUCCESS;
+  printReply.jobNumber_ = htonl(workList_.size()-1); 
+  strcpy(printReply.errorMessage_ , "success");
+
+  if((length = writen(clientFd , &printReply , sizeof(printReply)))
+      != sizeof(printReply))
+    error("error in sendPrintRequest::writen");
+
+  return 0;
 }
 
 //=============================================
@@ -73,13 +204,13 @@ void *PrintDaemon::printWorkListThread(void *printd)
   {
     if(PRINT_WORK_LIST == PRINT_ON)
     {
-      if(pthread_mutex_lock(&threadLock) != 0)
+      if(pthread_mutex_lock(&work_list_lock) != 0)
         error("error in pthread_mutex_lock");
 
       thisOne->printWorkList();
       PRINT_WORK_LIST = PRINT_OFF;
 
-      if(pthread_mutex_unlock(&threadLock) != 0)
+      if(pthread_mutex_unlock(&work_list_lock) != 0)
         error("error in pthread_mutex_unlock");
     }
   } 
@@ -96,7 +227,7 @@ void PrintDaemon::printWorkList()
   string fileName;
   stringstream ss;
 
-  ss<<FILE_DIRECTORY<<PRINT_LIST_FILE;
+  ss<<DIRECTORY<<PRINT_LIST_FILE;
 
   ofstream ofs(ss.str().c_str());
   if(!ofs)
@@ -111,57 +242,6 @@ void PrintDaemon::printWorkList()
       error("error in ofs during write");
   }
   ofs.close();
-}
-
-//=============================================
-/**
-*receiveFileThread using receiveFile 
-*It is the pthread function
-*/
-void *PrintDaemon::receiveFileThread(void *threadParam)
-{
-  if(pthread_mutex_lock(&threadLock) != 0)
-    error("error in pthread_mutex_lock");
-
-  ThreadParam *param = (ThreadParam*)threadParam;
-  param->me_->receiveFile(param->clientFd_); //the point
-
-  if(pthread_mutex_unlock(&threadLock) != 0)
-    error("error in pthread_mutex_unlock");
-
-  return NULL;
-}
-
-//=============================================
-/**
-*receiveFile to receive the file from print process
-*store the file in local directory
-*return value : 0 = receive success
-*/
-int PrintDaemon::receiveFile(int clientFd)
-{
-  char buffer[IO_SIZE];
-  string fileName;
-  int fd;
-  int readLen , writeLen;
-  stringstream ss;
-
-  ss << FILE_DIRECTORY<<pthread_self();
-  fileName = ss.str();
-
-  if((fd = creat(fileName.c_str() , S_IRUSR|S_IWUSR)) < 0) 
-    error("error in create");
-
-  workList_.push_back(WorkInfo(fileName));
-
-  while((readLen = read(clientFd , buffer , IO_SIZE)) > 0)
-  {
-    writeLen = writen(fd , buffer , readLen);
-    if(readLen != writeLen)
-      error("error in writen");
-  }
-  close(clientFd);
-  return 0;
 }
 
 //===========================================

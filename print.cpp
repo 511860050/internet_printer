@@ -25,10 +25,115 @@ void Print::run()
   if((sockFd = makeConnectToPrintd()) < 0)
     error("error in makeConenctToPrintd");
 
+  if(sendPrintRequest(sockFd) < 0)
+    error("error in sendPrintRequest");
+
   if(submitFile(sockFd) < 0)
     error("error in submitFile");
 
+  if(receivePrintReply(sockFd) < 0)
+    error("error in receivePrintReply");
+
   close(sockFd);
+}
+
+//============================================
+/**
+*build the PrintRequest and send it to printd
+*return value : 0 = success
+*/
+int Print::sendPrintRequest(int sockFd)
+{
+  struct PrintRequest printRequest;
+  struct stat fileInfo;
+  struct passwd *pwd;
+  stringstream ss;
+  string line;
+  FILE *sockFp;
+
+  /**********build the printRequest**************/
+  if(stat(fileName_ , &fileInfo) != 0)  //size
+    error("error in sendPrintRequest::stat");
+  printRequest.size_ = htonl(fileInfo.st_size);
+
+  if((pwd = getpwuid(geteuid())) == NULL)  //user name
+    strcpy(printRequest.userName_ , "unknow");
+  else
+  {
+    strcpy(printRequest.userName_ , pwd->pw_name);
+    if(strlen(pwd->pw_name) > HOST_NAME_MAX)
+      error("error in strcpy");
+  }
+
+  strcpy(printRequest.fileName_ , fileName_);  //file name
+  if(strlen(fileName_) > SIMPLE_SIZE)
+    error("error in strcpy");
+
+  printRequest.flags_ = htonl(PLAIN_TEXT);  //flags
+
+  /********using the string format to transport*******/
+  ss<<printRequest<<endl; 
+  ss<<END_SIGN<<end;
+  
+  if((sockFp = fdopen(sockFd , "w")) == NULL)
+    error("error in sendPrintRequest::fdopen");
+
+  while(getline(ss , s))
+    fputs(s.c_str() , strlen(s.c_str()) , sockFp);
+  
+  return 0;
+}
+
+//==================================================
+/**
+*submitFile to submit the pointed file to printd
+*sockFd : the socket to sumbit
+*return value : 0 = operate success
+*/
+int Print::submitFile(int sockFd)
+{
+  FILE *fp;
+  FILE *sockFp;
+  int c;
+
+  //sumbit the file to printd
+  if((fp = fopen(fileName_ , "r")) == NULL)
+    error("error in submitFile::fopen");
+
+  if((sockFp = fdopen(sockFd , "w")) == NULL)
+    error("error in submitFile::fdopen");
+
+  while((c = getc(fp)) != EOF)
+  {
+    fputc(c , sockFp);
+  }
+  fputc(c , sockFp); //EOF to represent the end of file
+
+  fclose(fp);
+
+  return 0;
+}
+
+//===============================================
+/**
+*receive the print reply from the printd
+*return value : 0 = true
+*/
+int Print::receivePrintReply(int sockFd)
+{
+  struct PrintReply printReply;
+  int length;
+
+  if((length = readn(sockFd , &printReply , sizeof(printReply)))
+     != sizeof(printReply))
+    error("error in receivePrintReply::readn");
+
+  //need to analysis the PrintReply
+  printf("resultCode : %ld\n" , printReply.resultCode_);
+  printf("jobNumber : %ld\n" , printReply.jobNumber_);
+  printf("errorMessage : %s\n" , printReply.errorMessage_);
+
+  return 0;
 }
 
 //============================================
@@ -106,39 +211,6 @@ int Print::makeConnectToPrintd()
     }
   }
   return -1;
-}
-
-//==================================================
-/**
-*submitFile to submit the pointed file to printd
-*sockFd : the socket to sumbit
-*return value : 0 = operate success
-*/
-int Print::submitFile(int sockFd)
-{
-  int fd;
-  int readLen;
-  int writeLen;
-  char buffer[IO_SIZE];
-
-  //sumbit the file to printd
-  if((fd = open(fileName_ , O_RDONLY)) < 0)
-  {
-    perror("error in submitFile::open");
-    return -1;
-  }
-
-  while((readLen = read(fd , buffer , IO_SIZE)) > 0)
-  {
-    writeLen = writen(sockFd , buffer , readLen);
-    if(writeLen != readLen)
-    {
-      perror("error in submitFile::writen");
-      return -1;
-    }
-  }
-  close(fd);
-  return 0;
 }
 
 //==================================================

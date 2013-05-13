@@ -9,7 +9,9 @@
 #define CHEN_HUAN_PUBLIC_FUNCITON_HEADER
 
 #include <iostream>
+#include <iomanip>
 #include <sstream>
+#include <fstream>
 #include <string>
 #include <list>
 
@@ -22,6 +24,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <pthread.h>
+#include <pwd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -47,8 +50,73 @@ using namespace std;
 
 #define ROOT_DIRECTORY "/"  //root directory
 
+#define SUCCESS 0  //for PrintReply.resultCode
+#define FAILURE 1
+
 int ERROR_FLAG;
 #define LOG_ON 1
+
+#define END_SIGN "%%"
+
+//==============================================
+/**
+*PrintRequest is the header information
+*print send to the print_daemon
+*/
+struct PrintRequest
+{
+  long size_;
+  long flags_;
+  char userName_[HOST_NAME_MAX];
+  char fileName_[SIMPLE_SIZE];
+};
+
+//==============================================
+/**
+*overload the ostream PrintRequest
+*/
+ostream& operator<<(ostream& os , const PrintRequest& printRequest)
+{
+  os<<printRequest.size_<<endl;
+  os<<printRequest.flags_<<endl;
+  os<<printRequest.userName_<<endl;
+  os<<printRequest.fileName_;
+
+  return os;
+}
+
+//==============================================
+/**
+*overload the istream PrintRequest
+*/
+istream& operator>>(istream& is , PrintRequest& printRequest)
+{
+}
+
+//==============================================
+/**
+*PrintReply is the header information
+*printd send to the print
+*/
+struct PrintReply
+{
+  long resultCode_; //SUCCESS or FAILURE
+  long jobNumber_; 
+  char errorMessage_[SIMPLE_SIZE];
+};
+
+//==============================================
+/**
+*overload the ostream PrintReply
+*/
+ostream& operator<<(ostream& os , const PrintReply& printReply)
+{
+  os<<printReply.resultCode_<<endl;
+  os<<printReply.jobNumber_<<endl;
+  os<<printReply.errorMessage_;
+
+  return os;
+}
 
 //==============================================
 /**
@@ -77,15 +145,6 @@ void sig_chld(int sigchld)
     pid = waitpid(-1 , &stat , WNOHANG);
     if(pid <= 0) break;
   }
-}
-
-//==============================================
-/**
-*sig_segv to report error 
-*/
-void sig_segv(int sigsegv)
-{
-  error("sorry");
 }
 
 //==============================================
@@ -139,6 +198,7 @@ char *scanConfigFile(const char* fileName , const char* key_)
   //using [key] [value] format to read config file
   sprintf(format , "%%%ds %%%ds" , MAX_KEY_LEN-1 , MAX_CONF_LEN-1);
   matchFlag = 0;
+
   while(fgets(line , MAX_CONF_LEN , fp) != NULL)
   {
     fputs(line , stdout);
@@ -149,7 +209,9 @@ char *scanConfigFile(const char* fileName , const char* key_)
       break;
     }
   }
+
   fclose(fp);
+
   if(matchFlag == 1)
   {
     return value;

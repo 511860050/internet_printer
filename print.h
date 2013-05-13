@@ -25,6 +25,8 @@
 
 #define PRINTD_NAME "printd"
 
+#define PLAIN_TEXT 0x01 //treat file as plain text
+
 //==========================================
 /**
 *Print to declare a class to send the file 
@@ -34,15 +36,18 @@
 class Print
 {
 public: 
-  Print(char *fileName)
-    :fileName_(fileName) {}
+Print(char *fileName)
+  :fileName_(fileName) {}
 
   void run();
 private:
-  int checkFile(char *fileName);
   int makeConnectToPrintd();
-  char *getPrintdName();
+  int sendPrintRequest(int sockFd);
   int submitFile(int sockFd);
+  int receivePrintReply(int sockFd);
+
+  int checkFile(char *fileName);
+  char *getPrintdName();
 private:
   char *fileName_;
 }; //end of Print
