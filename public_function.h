@@ -56,7 +56,8 @@ using namespace std;
 int ERROR_FLAG;
 #define LOG_ON 1
 
-#define END_SIGN "%%"
+#define RECEIVE_HEAD "%%"
+#define END_SIGN 255 
 
 //==============================================
 /**
@@ -77,20 +78,12 @@ struct PrintRequest
 */
 ostream& operator<<(ostream& os , const PrintRequest& printRequest)
 {
-  os<<printRequest.size_<<endl;
-  os<<printRequest.flags_<<endl;
-  os<<printRequest.userName_<<endl;
-  os<<printRequest.fileName_;
+  os<<"size : "<<printRequest.size_<<endl;
+  os<<"flags : "<<printRequest.flags_<<endl;
+  os<<"user name : "<<printRequest.userName_<<endl;
+  os<<"filae name : "<<printRequest.fileName_;
 
   return os;
-}
-
-//==============================================
-/**
-*overload the istream PrintRequest
-*/
-istream& operator>>(istream& is , PrintRequest& printRequest)
-{
 }
 
 //==============================================
@@ -111,9 +104,9 @@ struct PrintReply
 */
 ostream& operator<<(ostream& os , const PrintReply& printReply)
 {
-  os<<printReply.resultCode_<<endl;
-  os<<printReply.jobNumber_<<endl;
-  os<<printReply.errorMessage_;
+  os<<"result code : "<<printReply.resultCode_<<endl;
+  os<<"job number : "<<printReply.jobNumber_<<endl;
+  os<<"error message : "<<printReply.errorMessage_;
 
   return os;
 }
@@ -201,7 +194,7 @@ char *scanConfigFile(const char* fileName , const char* key_)
 
   while(fgets(line , MAX_CONF_LEN , fp) != NULL)
   {
-    fputs(line , stdout);
+//    fputs(line , stdout);
     n = sscanf(line , format , key , value);
     if(n == 2 && strcmp(key_ , key) == 0)
     {

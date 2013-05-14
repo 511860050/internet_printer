@@ -24,8 +24,8 @@ void PrintDaemon::run()
   ThreadParam threadParam;  //too nice to say 
   extern pthread_mutex_t work_list_lock;
 
-//  if(initializeDaemon(processName_ , 0) != 0)
-//    error("error in initializeDaemon");
+  if(initializeDaemon(processName_ , 0) != 0)
+    error("error in initializeDaemon");
 
   if((sockFd = makeListen()) < 0)
     error("error in makeListen");
@@ -34,9 +34,9 @@ void PrintDaemon::run()
     error("error in pthread_mutex_init");
 
   //SIGUSR1 to print the work list
-//  signal(SIGUSR1 , sig_usr_1); 
-//  if(pthread_create(&thread,NULL,printWorkListThread,(void*)this) != 0)
-//    error("error in pthread_create::printWorkListThread");
+  signal(SIGUSR1 , sig_usr_1); 
+  if(pthread_create(&thread,NULL,printWorkListThread,(void*)this) != 0)
+    error("error in pthread_create::printWorkListThread");
 
   while(true)
   {
@@ -93,13 +93,12 @@ return value : 0 = success
 */
 int PrintDaemon::receivePrintRequest(int clientFd)
 {
-  FILE *clientFp;
   int length;
-  char line[IO_SIZE];
   int jobNumber;
   string fileName;
   stringstream ss;
   struct PrintRequest printRequest;
+  char receiveReply[SIMPLE_SIZE];
   
   /*********receive string format PrintRequest*******/
   //build the file name 
@@ -107,27 +106,25 @@ int PrintDaemon::receivePrintRequest(int clientFd)
   ss<<DIRECTORY<<"/"<<PRINT_REQUEST<<"/"<<jobNumber;
   fileName = ss.str();
 
-  //using ofstream to complete  
   ofstream ofs(fileName.c_str());
   if(!ofs)
     error("error in receivePrintRequest::ofs");
 
-  if((clientFp = fdopen(clientFd , "r")) != NULL) 
-    error("error in receivePrintRequest::fdopen");
+  if((length = read(clientFd , &printRequest , sizeof(printRequest)))
+               < 0)
+    error("error in receivePrintRequest::read");
 
-  //what I want get is printRequest fuck you
-  while((length = fgets(line , IO_SIZE , clientFp)) > 0)
-  {
-    ofs<<line<<endl;
-  }
+  printRequest.size_ = ntohl(printRequest.size_);
+  printRequest.flags_ = ntohl(printRequest.flags_);
 
-
-
-
-
-    ofs<<printRequest;
-
+  ofs<<printRequest<<endl;
   ofs.close();
+
+  //send a reply : RECEIVE_HEAD
+  strcpy(receiveReply , RECEIVE_HEAD);
+  if(writen(clientFd , receiveReply , strlen(receiveReply)) 
+            < 0)
+    error("error in receivePrintRequest::writen");
 
   return 0;
 }
@@ -158,10 +155,9 @@ int PrintDaemon::receiveFile(int clientFd)
   if((clientFp = fdopen(clientFd , "r")) == NULL)
     error("error in fdopen");
 
-  while((c = getc(clientFp)) != EOF)
-  {
-    ofs<<char(c);
-  }
+  while((c = getc(clientFp)) != END_SIGN)
+    ofs.put(c);
+
   ofs.close();
 
   return 0;
@@ -175,16 +171,14 @@ int PrintDaemon::receiveFile(int clientFd)
 int PrintDaemon::sendPrintReply(int clientFd)
 {
   struct PrintReply printReply;
-  int length;
   
-  printReply.resultCode_ = SUCCESS;
+  printReply.resultCode_ = htonl(SUCCESS);
   printReply.jobNumber_ = htonl(workList_.size()-1); 
   strcpy(printReply.errorMessage_ , "success");
-
-  if((length = writen(clientFd , &printReply , sizeof(printReply)))
-      != sizeof(printReply))
+ 
+  if(writen(clientFd , &printReply , sizeof(printReply)) 
+     != sizeof(printReply))
     error("error in sendPrintRequest::writen");
-
   return 0;
 }
 

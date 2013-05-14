@@ -47,9 +47,8 @@ int Print::sendPrintRequest(int sockFd)
   struct PrintRequest printRequest;
   struct stat fileInfo;
   struct passwd *pwd;
-  stringstream ss;
-  string line;
-  FILE *sockFp;
+  int length;
+  char reply[SIMPLE_SIZE];
 
   /**********build the printRequest**************/
   if(stat(fileName_ , &fileInfo) != 0)  //size
@@ -71,17 +70,17 @@ int Print::sendPrintRequest(int sockFd)
 
   printRequest.flags_ = htonl(PLAIN_TEXT);  //flags
 
-  /********using the string format to transport*******/
-  ss<<printRequest<<endl; 
-  ss<<END_SIGN<<end;
-  
-  if((sockFp = fdopen(sockFd , "w")) == NULL)
-    error("error in sendPrintRequest::fdopen");
+  //send printRequest and receive reply to conform
+  if((length = writen(sockFd , &printRequest , sizeof(printRequest)))
+                      != sizeof(printRequest))
+    error("error in writen");
 
-  while(getline(ss , s))
-    fputs(s.c_str() , strlen(s.c_str()) , sockFp);
+  length = read(sockFd , reply , SIMPLE_SIZE);
+  reply[length] = '\0';
+  if(strcmp(reply , RECEIVE_HEAD) == 0)
+    return 0;
   
-  return 0;
+  return -1;
 }
 
 //==================================================
@@ -104,11 +103,10 @@ int Print::submitFile(int sockFd)
     error("error in submitFile::fdopen");
 
   while((c = getc(fp)) != EOF)
-  {
     fputc(c , sockFp);
-  }
-  fputc(c , sockFp); //EOF to represent the end of file
 
+  fputc(END_SIGN , sockFp);
+  fflush(sockFp);
   fclose(fp);
 
   return 0;
@@ -122,9 +120,8 @@ int Print::submitFile(int sockFd)
 int Print::receivePrintReply(int sockFd)
 {
   struct PrintReply printReply;
-  int length;
 
-  if((length = readn(sockFd , &printReply , sizeof(printReply)))
+  if(readn(sockFd , &printReply , sizeof(printReply)) 
      != sizeof(printReply))
     error("error in receivePrintReply::readn");
 
