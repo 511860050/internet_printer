@@ -48,7 +48,6 @@ int Print::sendPrintRequest(int sockFd)
   struct stat fileInfo;
   struct passwd *pwd;
   int length;
-  char reply[SIMPLE_SIZE];
 
   /**********build the printRequest**************/
   if(stat(fileName_ , &fileInfo) != 0)  //size
@@ -75,12 +74,7 @@ int Print::sendPrintRequest(int sockFd)
                       != sizeof(printRequest))
     error("error in writen");
 
-  length = read(sockFd , reply , SIMPLE_SIZE);
-  reply[length] = '\0';
-  if(strcmp(reply , RECEIVE_HEAD) == 0)
-    return 0;
-  
-  return -1;
+  return 0;
 }
 
 //==================================================
@@ -126,9 +120,6 @@ int Print::receivePrintReply(int sockFd)
     error("error in receivePrintReply::readn");
 
   //need to analysis the PrintReply
-  printf("resultCode : %ld\n" , printReply.resultCode_);
-  printf("jobNumber : %ld\n" , printReply.jobNumber_);
-  printf("errorMessage : %s\n" , printReply.errorMessage_);
 
   return 0;
 }

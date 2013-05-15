@@ -20,8 +20,7 @@ void PrintDaemon::run()
   int sockFd , clientFd;
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
-  pthread_t thread;
-  ThreadParam threadParam;  //too nice to say 
+  pthread_t threadSignal;
   extern pthread_mutex_t work_list_lock;
 
   if(initializeDaemon(processName_ , 0) != 0)
@@ -35,7 +34,8 @@ void PrintDaemon::run()
 
   //SIGUSR1 to print the work list
   signal(SIGUSR1 , sig_usr_1); 
-  if(pthread_create(&thread,NULL,printWorkListThread,(void*)this) != 0)
+  if(pthread_create(&threadSignal,NULL,printWorkListThread,
+                   (void*)this) != 0)
     error("error in pthread_create::printWorkListThread");
 
   while(true)
@@ -43,7 +43,10 @@ void PrintDaemon::run()
     clientAddrLen = sizeof(clientAddr);
     if((clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
       continue;
-    
+     //线程共享变量，这种算吗?
+     pthread_t thread;
+     ThreadParam threadParam;  //too nice to say 
+
      threadParam.this_ = this;  //too nice to say
      threadParam.clientFd_ = clientFd;
      
@@ -94,16 +97,13 @@ return value : 0 = success
 int PrintDaemon::receivePrintRequest(int clientFd)
 {
   int length;
-  int jobNumber;
   string fileName;
   stringstream ss;
   struct PrintRequest printRequest;
-  char receiveReply[SIMPLE_SIZE];
   
   /*********receive string format PrintRequest*******/
   //build the file name 
-  jobNumber = workList_.size();
-  ss<<DIRECTORY<<"/"<<PRINT_REQUEST<<"/"<<jobNumber;
+  ss<<DIRECTORY<<"/"<<PRINT_REQUEST<<"/"<<workList_.size();
   fileName = ss.str();
 
   ofstream ofs(fileName.c_str());
@@ -119,12 +119,6 @@ int PrintDaemon::receivePrintRequest(int clientFd)
 
   ofs<<printRequest<<endl;
   ofs.close();
-
-  //send a reply : RECEIVE_HEAD
-  strcpy(receiveReply , RECEIVE_HEAD);
-  if(writen(clientFd , receiveReply , strlen(receiveReply)) 
-            < 0)
-    error("error in receivePrintRequest::writen");
 
   return 0;
 }
@@ -143,7 +137,7 @@ int PrintDaemon::receiveFile(int clientFd)
   int c;
 
   //bulid the file name and creat the file
-  ss<<DIRECTORY<<"/"<<PRINT_FILE<<"/"<<pthread_self();
+  ss<<DIRECTORY<<"/"<<PRINT_FILE<<"/"<<workList_.size();
   fileName = ss.str();
 
   workList_.push_back(WorkInfo(fileName));
@@ -178,7 +172,7 @@ int PrintDaemon::sendPrintReply(int clientFd)
  
   if(writen(clientFd , &printReply , sizeof(printReply)) 
      != sizeof(printReply))
-    error("error in sendPrintRequest::writen");
+    error("error in sendPrintReply::writen");
   return 0;
 }
 
