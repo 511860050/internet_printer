@@ -38,7 +38,6 @@ using namespace std;
 *all kinds of define
 */
 #define SIMPLE_SIZE 150 //simple buffer size to read simple message 
-#define IO_SIZE 4096 //buffer size in I/O file 
 
 #ifndef HOST_NAME_MAX  
 #define HOST_NAME_MAX 256  //the max length of host name
@@ -81,7 +80,7 @@ ostream& operator<<(ostream& os , const PrintRequest& printRequest)
   os<<"size : "<<printRequest.size_<<endl;
   os<<"flags : "<<printRequest.flags_<<endl;
   os<<"user name : "<<printRequest.userName_<<endl;
-  os<<"filae name : "<<printRequest.fileName_;
+  os<<"file name : "<<printRequest.fileName_;
 
   return os;
 }

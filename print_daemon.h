@@ -15,12 +15,12 @@
 #define IPP_PORT "13000"
 #define SERVICE_NAME "ipp" 
 
-#define LISTEN_QUEUE 10
+#define LISTEN_QUEUE 50
 
 #define DIRECTORY "/home/chenhuan/Hello_World/internet_print"
 #define PRINT_FILE "file"
 #define PRINT_REQUEST "request"
-#define PRINT_LIST_FILE "work_list"
+#define PRINT_LIST_FILE "print_work_list"
 
 int PRINT_WORK_LIST;
 #define PRINT_ON 0

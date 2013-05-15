@@ -67,7 +67,10 @@ int Print::sendPrintRequest(int sockFd)
   if(strlen(fileName_) > SIMPLE_SIZE)
     error("error in strcpy");
 
-  printRequest.flags_ = htonl(PLAIN_TEXT);  //flags
+  if(textFormat_ == TEXT)
+    printRequest.flags_ = htonl(PLAIN_TEXT);  //flags
+  else
+    printRequest.flags_ = 0;
 
   //send printRequest and receive reply to conform
   if((length = writen(sockFd , &printRequest , sizeof(printRequest)))
@@ -205,10 +208,22 @@ int Print::makeConnectToPrintd()
 
 int main(int ac , char *av[])
 {
-  if(ac != 2)
+  if(ac < 2)
     error("Usage: command [fileName]");
 
-  Print print(av[1]);
+  int c;
+  int textFormat = 0; 
+
+  while((c = getopt(ac , av , "t")) != -1)
+  {
+    switch(c)
+    {
+      case 't' : textFormat = TEXT ; break;
+      case '?' : break;
+    }
+  }
+
+  Print print(av[optind] , textFormat);
   print.run();
 
   return 0;

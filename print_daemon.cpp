@@ -17,14 +17,16 @@
 */
 void PrintDaemon::run()
 {
-  int sockFd , clientFd;
+  int sockFd ; 
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
-  pthread_t threadSignal;
+  pthread_t thread;
+  int *clientFd;
+  ThreadParam *threadParam;  //too nice to say 
   extern pthread_mutex_t work_list_lock;
 
-  if(initializeDaemon(processName_ , 0) != 0)
-    error("error in initializeDaemon");
+//  if(initializeDaemon(processName_ , 0) != 0)
+//    error("error in initializeDaemon");
 
   if((sockFd = makeListen()) < 0)
     error("error in makeListen");
@@ -34,24 +36,31 @@ void PrintDaemon::run()
 
   //SIGUSR1 to print the work list
   signal(SIGUSR1 , sig_usr_1); 
-  if(pthread_create(&threadSignal,NULL,printWorkListThread,
+  if(pthread_create(&thread,NULL,printWorkListThread,
                    (void*)this) != 0)
     error("error in pthread_create::printWorkListThread");
 
   while(true)
   {
     clientAddrLen = sizeof(clientAddr);
-    if((clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
-      continue;
-     //线程共享变量，这种算吗?
-     pthread_t thread;
-     ThreadParam threadParam;  //too nice to say 
+    /**********this place is fucking important**********/
+    clientFd = new int;
+    if(clientFd == NULL)
+      error("error in new int");
 
-     threadParam.this_ = this;  //too nice to say
-     threadParam.clientFd_ = clientFd;
+    threadParam = new ThreadParam;
+    if(threadParam == NULL)
+      error("error in new ThreadParam");
+    /**********this place is fucking important*********/
+    if((*clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
+      continue;
+
+     threadParam->this_ = this;  //too nice to say
+     threadParam->clientFd_ = *clientFd;
+     delete clientFd; //new and delete
      
      if(pthread_create(&thread,NULL ,receiveFileThread ,
-        (void*)&threadParam) != 0)
+        (void*)threadParam) != 0)
        error("error in pthread_create::receiveFileThread");
    }
 
@@ -66,10 +75,10 @@ void PrintDaemon::run()
 */
 void *PrintDaemon::receiveFileThread(void *threadParam)
 {
-  if(pthread_mutex_lock(&work_list_lock) != 0)
-    error("error in pthread_mutex_lock");
-
   ThreadParam *param = (ThreadParam*)threadParam;
+
+  if(pthread_mutex_lock(&work_list_lock) != 0)
+    error("error in receivePrintRequest::pthread_mutex_lock");
 
   if(param->this_->receivePrintRequest(param->clientFd_) != 0)
     error("error in receivePrintRequest");
@@ -82,8 +91,10 @@ void *PrintDaemon::receiveFileThread(void *threadParam)
 
   close(param->clientFd_);
 
+  delete (ThreadParam*)threadParam; //new and delete
+
   if(pthread_mutex_unlock(&work_list_lock) != 0)
-    error("error in pthread_mutex_unlock");
+    error("error in receivePrintRequest::pthread_mutex_lock");
 
   return NULL;
 }
@@ -103,6 +114,7 @@ int PrintDaemon::receivePrintRequest(int clientFd)
   
   /*********receive string format PrintRequest*******/
   //build the file name 
+
   ss<<DIRECTORY<<"/"<<PRINT_REQUEST<<"/"<<workList_.size();
   fileName = ss.str();
 
@@ -137,6 +149,7 @@ int PrintDaemon::receiveFile(int clientFd)
   int c;
 
   //bulid the file name and creat the file
+
   ss<<DIRECTORY<<"/"<<PRINT_FILE<<"/"<<workList_.size();
   fileName = ss.str();
 
@@ -167,7 +180,9 @@ int PrintDaemon::sendPrintReply(int clientFd)
   struct PrintReply printReply;
   
   printReply.resultCode_ = htonl(SUCCESS);
+
   printReply.jobNumber_ = htonl(workList_.size()-1); 
+
   strcpy(printReply.errorMessage_ , "success");
  
   if(writen(clientFd , &printReply , sizeof(printReply)) 
@@ -192,14 +207,10 @@ void *PrintDaemon::printWorkListThread(void *printd)
   {
     if(PRINT_WORK_LIST == PRINT_ON)
     {
-      if(pthread_mutex_lock(&work_list_lock) != 0)
-        error("error in pthread_mutex_lock");
 
       thisOne->printWorkList();
       PRINT_WORK_LIST = PRINT_OFF;
 
-      if(pthread_mutex_unlock(&work_list_lock) != 0)
-        error("error in pthread_mutex_unlock");
     }
   } 
   return NULL;
@@ -214,12 +225,19 @@ void PrintDaemon::printWorkList()
 {
   string fileName;
   stringstream ss;
+  time_t ticks;
+  char *theTime;
 
-  ss<<DIRECTORY<<PRINT_LIST_FILE;
+  ss<<DIRECTORY<<"/"<<PRINT_LIST_FILE;
 
   ofstream ofs(ss.str().c_str());
   if(!ofs)
     error("error in ofs");
+
+  //write in the time
+  ticks = time(NULL);
+  theTime = ctime(&ticks);
+  ofs << theTime <<endl;
 
   typedef list<WorkInfo>::const_iterator listCIter;
   for(listCIter iter = workList_.begin() ; iter != workList_.end() ; 
@@ -229,6 +247,7 @@ void PrintDaemon::printWorkList()
     if(ofs.bad() || ofs.fail())
       error("error in ofs during write");
   }
+
   ofs.close();
 }
 
@@ -245,8 +264,8 @@ int PrintDaemon::makeListen()
   struct addrinfo* addressList;
   struct addrinfo* address;
 
-  addressList = getAddrInfo(NULL,IPP_PORT,
-                AI_PASSIVE , AF_UNSPEC , SOCK_STREAM);
+  addressList = getAddrInfo(NULL , IPP_PORT , AI_PASSIVE , 
+                            AF_UNSPEC , SOCK_STREAM);
   if(addressList == NULL)
     error("error in getAddrInfo");
 

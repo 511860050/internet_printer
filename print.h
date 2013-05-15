@@ -25,6 +25,7 @@
 
 #define PRINTD_NAME "printd"
 
+#define TEXT 1 
 #define PLAIN_TEXT 0x01 //treat file as plain text
 
 //==========================================
@@ -36,8 +37,8 @@
 class Print
 {
 public: 
-Print(char *fileName)
-  :fileName_(fileName) {}
+Print(char *fileName , int textFormat)
+  :fileName_(fileName) , textFormat_(textFormat) {}
 
   void run();
 private:
@@ -50,6 +51,7 @@ private:
   char *getPrintdName();
 private:
   char *fileName_;
+  int textFormat_; //0 = print as PLAIN_TEXT 
 }; //end of Print
 
 #endif
