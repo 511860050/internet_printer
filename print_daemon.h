@@ -13,32 +13,17 @@
 #include "public_function.h"
 
 #define IPP_PORT "13000"
-#define SERVICE_NAME "ipp" 
+#define SERVICE_NAME "ipp"
 
 #define LISTEN_QUEUE 50
 
 #define DIRECTORY "/home/chenhuan/Hello_World/internet_print"
-#define PRINT_FILE "file"
-#define PRINT_REQUEST "request"
+#define PRINT_FILE_DIR "file"
+#define PRINT_REQUEST_DIR "request"
 #define PRINT_LIST_FILE "print_work_list"
 
-int PRINT_WORK_LIST;
-#define PRINT_ON 0
-#define PRINT_OFF 1
-
-pthread_mutex_t work_list_lock;  //thread lock
-
-//=============================================
-/**
-*sig_usr_1 to receive the SIGUSR1
-*set the PRINT_WORK_LIST to be OVER
-*the PrintDaemon can be killed
-*/
-void sig_usr_1(int sigusr1)
-{
-  extern int PRINT_WORK_LIST;
-  PRINT_WORK_LIST = PRINT_ON;
-}
+#define INITIAL_READ 0
+#define RE_READ 1
 
 //=============================================
 /**
@@ -55,31 +40,44 @@ private:
 
     WorkInfo(string fileName)
       :fileName_(fileName) {}
-  }; 
+  };
 private:
-  struct ThreadParam
+  struct ClientThreadParam
   {
     PrintDaemon *this_;
     int clientFd_;
   };
 public:
-  PrintDaemon(char *processName)
-    :processName_(processName) {}
+  PrintDaemon(char *processName);
+  ~PrintDaemon();
+
+private:
+  void initialize();
 
   void run();
-private:
+
+  int signalInitialize();
+
   int makeListen();
-  
-  static void *receiveFileThread(void *threadParam);
+
+  static void *signalThread(void *printd);
+  void signalProcess();
+  void killClientThreads();
+  void printWorkList();
+
+  static void *clientThread(void *threadParam);
   int receivePrintRequest(int clientFd);
   int receiveFile(int clientFd);
   int sendPrintReply(int clientFd);
 
-  static void *printWorkListThread(void *printd);
-  void printWorkList();
 private:
-  char *processName_;  //name pf process to initialize daemon
   list<WorkInfo> workList_; //list to hold work informations
+  pthread_mutex_t work_list_lock_;  //thread lock to workList_
+
+  int reConfigure_; //RE_READ configure file in communcate with printer
+  pthread_mutex_t re_configure_lock_; //thread lock to reRead_;
+
+  sigset_t mask_;
 }; //end of PrintDaemon
 
 #endif

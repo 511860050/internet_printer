@@ -9,6 +9,47 @@
 
 //===========================================
 /**
+*constructor of PrintDaemon
+*/
+PrintDaemon::PrintDaemon(char *processName)
+{
+//  if(initializeDaemon(processName , 0) != 0)
+//    error("error in initializeDaemon");
+  initialize();
+  run();
+}
+
+//=============================================
+/**
+*deconstructor
+*/
+PrintDaemon::~PrintDaemon()
+{
+  if(pthread_mutex_destroy(&work_list_lock_) != 0)
+    error("error in pthread_mutex_destroy");
+
+  if(pthread_mutex_destroy(&re_configure_lock_) != 0)
+    error("error in pthread_mutex_destroy");
+}
+
+//===========================================
+/**
+*initialize the data member
+*/
+void PrintDaemon::initialize()
+{
+  if(pthread_mutex_init(&work_list_lock_ , NULL) != 0)
+    error("error in pthread_mutex_init");
+
+  reConfigure_ = INITIAL_READ;
+
+  if(pthread_mutex_init(&re_configure_lock_ , NULL) != 0)
+    error("error in pthread_mutex_init");
+}
+
+
+//===========================================
+/**
 *run to complete the main flow of the print daemon
 *1. make socket bind listen
 *2. accept the connect
@@ -17,28 +58,22 @@
 */
 void PrintDaemon::run()
 {
-  int sockFd ; 
+  int sockFd ;
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
   pthread_t thread;
+  pthread_t sigThread;
   int *clientFd;
-  ThreadParam *threadParam;  //too nice to say 
-  extern pthread_mutex_t work_list_lock;
+  ClientThreadParam *threadParam;
 
-//  if(initializeDaemon(processName_ , 0) != 0)
-//    error("error in initializeDaemon");
+  if(signalInitialize() != 0)
+    error("error in signalInitialize");
 
   if((sockFd = makeListen()) < 0)
     error("error in makeListen");
- 
-  if(pthread_mutex_init(&work_list_lock , NULL) != 0)
-    error("error in pthread_mutex_init");
 
-  //SIGUSR1 to print the work list
-  signal(SIGUSR1 , sig_usr_1); 
-  if(pthread_create(&thread,NULL,printWorkListThread,
-                   (void*)this) != 0)
-    error("error in pthread_create::printWorkListThread");
+  if(pthread_create(&sigThread,NULL,signalThread, (void*)this) != 0)
+    error("error in pthread_create::signalThread");
 
   while(true)
   {
@@ -48,36 +83,164 @@ void PrintDaemon::run()
     if(clientFd == NULL)
       error("error in new int");
 
-    threadParam = new ThreadParam;
+    threadParam = new ClientThreadParam;
     if(threadParam == NULL)
-      error("error in new ThreadParam");
+      error("error in new ClientThreadParam");
     /**********this place is fucking important*********/
     if((*clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
       continue;
 
-     threadParam->this_ = this;  //too nice to say
+     threadParam->this_ = this;
      threadParam->clientFd_ = *clientFd;
      delete clientFd; //new and delete
-     
-     if(pthread_create(&thread,NULL ,receiveFileThread ,
-        (void*)threadParam) != 0)
-       error("error in pthread_create::receiveFileThread");
-   }
 
-   if(pthread_mutex_destroy(&work_list_lock) != 0)
-     error("error in pthread_mutex_destroy");
+     if(pthread_create(&thread , NULL , clientThread ,
+       (void*)threadParam) != 0)
+       error("error in pthread_create::clientThread");
+   }
 }
 
 //=============================================
 /**
-*receiveFileThread using receiveFile 
+*intialize signal's process
+*/
+int PrintDaemon::signalInitialize()
+{
+  struct sigaction sa;
+
+  //ingnore the SIGPIPE
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sa.sa_handler = SIG_IGN;
+  if(sigaction(SIGPIPE , &sa , NULL) < 0)
+    error("error in sigaction");
+  //block the SIGHUP SIGTERM SIGUSR1
+  sigemptyset(&mask_);
+  sigaddset(&mask_ , SIGHUP);
+  sigaddset(&mask_ , SIGTERM);
+  sigaddset(&mask_ , SIGUSR1);
+  if(pthread_sigmask(SIG_BLOCK ,&mask_ , NULL) != 0)
+    error("error in pthread_sigmask");
+
+  return 0;
+}
+
+//=============================================
+/**
+*signalThread to deal with the pointed signal
+*it uses signalProcess() to do so
+*/
+void *PrintDaemon::signalThread(void *printd)
+{
+  PrintDaemon *thisOne = (PrintDaemon*)printd;
+
+  thisOne->signalProcess();
+
+  return NULL;
+}
+
+//=============================================
+/**
+*signalProcess to process signal:
+*SIGHUP : reread the configure file
+*SIGTERM : kill the whole process
+*SIGUSR1 : print the work list
+*/
+void PrintDaemon::signalProcess()
+{
+  int sigInfo;
+
+  while(true)
+  {
+    if(sigwait(&mask_ , &sigInfo) != 0)
+      error("error in signalProcess::sigwait");
+
+    switch(sigInfo)
+    {
+      case SIGHUP:
+      {
+        pthread_mutex_lock(&re_configure_lock_);
+        reConfigure_ = RE_READ;
+        pthread_mutex_unlock(&re_configure_lock_);
+        break;
+      }
+      case SIGTERM:
+      {
+        killClientThreads();
+        syslog(LOG_INFO , "terminatr with signal SIGTERM");
+        exit(0);
+      }
+      case SIGUSR1:
+      {
+        printWorkList();
+        break;
+      }
+      default:
+      {
+        syslog(LOG_ERR,"unexpected signal happened %m");
+        break;
+      }
+    }
+  }
+}
+
+//============================================
+/**
+*killClientThreads - SIGTERM to kill all the childThread
+*/
+void PrintDaemon::killClientThreads()
+{
+}
+
+//============================================
+/**
+*print the workList
+*using C++ ofstream to complete it
+*/
+void PrintDaemon::printWorkList()
+{
+  string fileName;
+  stringstream ss;
+  time_t ticks;
+  char *theTime;
+
+  ss<<DIRECTORY<<"/"<<PRINT_LIST_FILE;
+
+  ofstream ofs(ss.str().c_str());
+  if(!ofs)
+    error("error in ofs");
+
+  //write in the time
+  ticks = time(NULL);
+  theTime = ctime(&ticks);
+  ofs << theTime <<endl;
+
+  pthread_mutex_lock(&work_list_lock_);
+
+  typedef list<WorkInfo>::const_iterator listCIter;
+  for(listCIter iter = workList_.begin() ; iter != workList_.end() ;
+      ++iter)
+  {
+    ofs<<(*iter).fileName_<<endl;
+    if(ofs.bad() || ofs.fail())
+      error("error in ofs during write");
+  }
+
+  pthread_mutex_unlock(&work_list_lock_);
+
+  ofs.close();
+}
+
+//=============================================
+/**
+*clientThread using receiveFile
 *It is the pthread function
 */
-void *PrintDaemon::receiveFileThread(void *threadParam)
+void *PrintDaemon::clientThread(void *threadParam)
 {
-  ThreadParam *param = (ThreadParam*)threadParam;
+  ClientThreadParam *param = (ClientThreadParam*)threadParam;
 
-  if(pthread_mutex_lock(&work_list_lock) != 0)
+  if(pthread_mutex_lock(&(param->this_->work_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
 
   if(param->this_->receivePrintRequest(param->clientFd_) != 0)
@@ -91,10 +254,10 @@ void *PrintDaemon::receiveFileThread(void *threadParam)
 
   close(param->clientFd_);
 
-  delete (ThreadParam*)threadParam; //new and delete
-
-  if(pthread_mutex_unlock(&work_list_lock) != 0)
+  if(pthread_mutex_unlock(&(param->this_->work_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
+
+  delete param; 
 
   return NULL;
 }
@@ -111,11 +274,10 @@ int PrintDaemon::receivePrintRequest(int clientFd)
   string fileName;
   stringstream ss;
   struct PrintRequest printRequest;
-  
-  /*********receive string format PrintRequest*******/
-  //build the file name 
 
-  ss<<DIRECTORY<<"/"<<PRINT_REQUEST<<"/"<<workList_.size();
+  /*********receive string format PrintRequest*******/
+  //build the file name
+  ss<<DIRECTORY<<"/"<<PRINT_REQUEST_DIR<<"/"<<workList_.size();
   fileName = ss.str();
 
   ofstream ofs(fileName.c_str());
@@ -149,8 +311,7 @@ int PrintDaemon::receiveFile(int clientFd)
   int c;
 
   //bulid the file name and creat the file
-
-  ss<<DIRECTORY<<"/"<<PRINT_FILE<<"/"<<workList_.size();
+  ss<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<workList_.size();
   fileName = ss.str();
 
   workList_.push_back(WorkInfo(fileName));
@@ -178,77 +339,17 @@ int PrintDaemon::receiveFile(int clientFd)
 int PrintDaemon::sendPrintReply(int clientFd)
 {
   struct PrintReply printReply;
-  
+
   printReply.resultCode_ = htonl(SUCCESS);
 
-  printReply.jobNumber_ = htonl(workList_.size()-1); 
+  printReply.jobNumber_ = htonl(workList_.size()-1);
 
   strcpy(printReply.errorMessage_ , "success");
- 
-  if(writen(clientFd , &printReply , sizeof(printReply)) 
+
+  if(writen(clientFd , &printReply , sizeof(printReply))
      != sizeof(printReply))
     error("error in sendPrintReply::writen");
   return 0;
-}
-
-//=============================================
-/**
-*deadSignal to deal with the singal
-*/
-void *PrintDaemon::printWorkListThread(void *printd)
-{
-  extern int PRINT_WORK_LIST;
-  PrintDaemon *thisOne;
-
-  PRINT_WORK_LIST = PRINT_OFF;
-  thisOne = (PrintDaemon*)printd;
-
-  while(true)
-  {
-    if(PRINT_WORK_LIST == PRINT_ON)
-    {
-
-      thisOne->printWorkList();
-      PRINT_WORK_LIST = PRINT_OFF;
-
-    }
-  } 
-  return NULL;
-}
-
-//============================================
-/**
-*print the workList
-*using C++ ofstream to complete it
-*/
-void PrintDaemon::printWorkList()
-{
-  string fileName;
-  stringstream ss;
-  time_t ticks;
-  char *theTime;
-
-  ss<<DIRECTORY<<"/"<<PRINT_LIST_FILE;
-
-  ofstream ofs(ss.str().c_str());
-  if(!ofs)
-    error("error in ofs");
-
-  //write in the time
-  ticks = time(NULL);
-  theTime = ctime(&ticks);
-  ofs << theTime <<endl;
-
-  typedef list<WorkInfo>::const_iterator listCIter;
-  for(listCIter iter = workList_.begin() ; iter != workList_.end() ; 
-      ++iter)
-  {
-    ofs<<(*iter).fileName_<<endl;
-    if(ofs.bad() || ofs.fail())
-      error("error in ofs during write");
-  }
-
-  ofs.close();
 }
 
 //===========================================
@@ -257,24 +358,24 @@ void PrintDaemon::printWorkList()
 *complete socket , bind and  listen
 *return value : 0 = success
 */
-int PrintDaemon::makeListen() 
+int PrintDaemon::makeListen()
 {
   int sockFd;
   const int on = 1;
   struct addrinfo* addressList;
   struct addrinfo* address;
 
-  addressList = getAddrInfo(NULL , IPP_PORT , AI_PASSIVE , 
+  addressList = getAddrInfo(NULL , IPP_PORT , AI_PASSIVE ,
                             AF_UNSPEC , SOCK_STREAM);
   if(addressList == NULL)
     error("error in getAddrInfo");
 
   for(address = addressList;address != NULL;address = address->ai_next)
   {
-    if((sockFd = socket(address->ai_family , address->ai_socktype , 
+    if((sockFd = socket(address->ai_family , address->ai_socktype ,
                  address->ai_protocol)) < 0 )
       continue;
-    else if(setsockopt(sockFd , SOL_SOCKET , SO_REUSEADDR , &on , 
+    else if(setsockopt(sockFd , SOL_SOCKET , SO_REUSEADDR , &on ,
             sizeof(on)) == -1)
     {
       close(sockFd);
@@ -300,7 +401,6 @@ int PrintDaemon::makeListen()
 int main(int ac , char *av[])
 {
   PrintDaemon printd(av[0]);
-  printd.run();
 
   return 0;
 }
