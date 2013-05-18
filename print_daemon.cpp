@@ -12,6 +12,7 @@
 *constructor of PrintDaemon
 */
 PrintDaemon::PrintDaemon(char *processName)
+  :jobNumber_(0) , reConfigure_(INITIAL_READ)
 {
 //  if(initializeDaemon(processName , 0) != 0)
 //    error("error in initializeDaemon");
@@ -25,7 +26,13 @@ PrintDaemon::PrintDaemon(char *processName)
 */
 PrintDaemon::~PrintDaemon()
 {
-  if(pthread_mutex_destroy(&work_list_lock_) != 0)
+  if(pthread_mutex_destroy(&job_number_lock_) != 0)
+    error("error in pthread_mutex_destroy");
+
+  if(pthread_mutex_destroy(&job_list_lock_) != 0)
+    error("error in pthread_mutex_destroy");
+
+  if(pthread_mutex_destroy(&thread_list_lock_) != 0)
     error("error in pthread_mutex_destroy");
 
   if(pthread_mutex_destroy(&re_configure_lock_) != 0)
@@ -38,10 +45,14 @@ PrintDaemon::~PrintDaemon()
 */
 void PrintDaemon::initialize()
 {
-  if(pthread_mutex_init(&work_list_lock_ , NULL) != 0)
+  if(pthread_mutex_init(&job_number_lock_ , NULL) != 0)
     error("error in pthread_mutex_init");
 
-  reConfigure_ = INITIAL_READ;
+  if(pthread_mutex_init(&job_list_lock_ , NULL) != 0)
+    error("error in pthread_mutex_init");
+
+  if(pthread_mutex_init(&thread_list_lock_ , NULL) != 0)
+    error("error in pthread_mutex_init");
 
   if(pthread_mutex_init(&re_configure_lock_ , NULL) != 0)
     error("error in pthread_mutex_init");
@@ -144,7 +155,7 @@ void *PrintDaemon::signalThread(void *printd)
 *signalProcess to process signal:
 *SIGHUP : reread the configure file
 *SIGTERM : kill the whole process
-*SIGUSR1 : print the work list
+*SIGUSR1 : print the job list
 */
 void PrintDaemon::signalProcess()
 {
@@ -172,7 +183,7 @@ void PrintDaemon::signalProcess()
       }
       case SIGUSR1:
       {
-        printWorkList();
+        printJobList();
         break;
       }
       default:
@@ -196,8 +207,9 @@ void PrintDaemon::killClientThreads()
 /**
 *print the workList
 *using C++ ofstream to complete it
+*store the result into DIRECTORY/PRINT_LIST_FILE 
 */
-void PrintDaemon::printWorkList()
+void PrintDaemon::printJobList() 
 {
   string fileName;
   stringstream ss;
@@ -207,28 +219,70 @@ void PrintDaemon::printWorkList()
   ss<<DIRECTORY<<"/"<<PRINT_LIST_FILE;
 
   ofstream ofs(ss.str().c_str());
-  if(!ofs)
-    error("error in ofs");
+  if(!ofs)  error("error in ofs");
 
   //write in the time
   ticks = time(NULL);
   theTime = ctime(&ticks);
   ofs << theTime <<endl;
 
-  pthread_mutex_lock(&work_list_lock_);
+  /************deal with list<JobInfo>***********/
+  if(pthread_mutex_lock(&job_list_lock_) != 0)
+    error("error in pthread_mutex_lock");
 
-  typedef list<WorkInfo>::const_iterator listCIter;
-  for(listCIter iter = workList_.begin() ; iter != workList_.end() ;
+  typedef list<JobInfo>::const_iterator listCIter;
+  for(listCIter iter = jobList_.begin() ; iter != jobList_.end() ;
       ++iter)
   {
-    ofs<<(*iter).fileName_<<endl;
+    ofs<<(*iter).jobNumber_<<endl;
     if(ofs.bad() || ofs.fail())
       error("error in ofs during write");
   }
 
-  pthread_mutex_unlock(&work_list_lock_);
-
+  if(pthread_mutex_unlock(&job_list_lock_) != 0)
+    error("error in pthread_mutex_lock");
+  /*********************************************/
   ofs.close();
+}
+
+//==============================================
+/**
+*clientCleanUp to call clientThreadCleanup to
+*remove the ThreadInfo from list and close the clientFd
+*/
+void PrintDaemon::clientCleanUp(void *clientCleanUpParam)
+{
+  ClientCleanUpParam *param;
+
+  param = (ClientCleanUpParam*)clientCleanUpParam;
+
+  param->this_->clientCleanUp(param->threadNumber_);
+}
+
+//=============================================
+/**
+*clientCleanUp - clean up the clientPthread
+*remove the thread from threadList_
+*/
+void PrintDaemon::clientCleanUp(pthread_t threadNumber)
+{
+  list<ClientThreadInfo>::iterator iter;
+  
+  if(pthread_mutex_lock(&thread_list_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
+  iter = clientThreadList_.begin();
+  for( ; iter != clientThreadList_.end() ; ++iter)
+  {
+    if((*iter).threadNumber_ == threadNumber)
+      break;
+  }
+  //close the clientFd here
+  close((*iter).clientFd_);
+  clientThreadList_.erase(iter);
+
+  if(pthread_mutex_unlock(&thread_list_lock_) != 0)
+    error("error in pthread_mutex_lock");
 }
 
 //=============================================
@@ -238,9 +292,32 @@ void PrintDaemon::printWorkList()
 */
 void *PrintDaemon::clientThread(void *threadParam)
 {
-  ClientThreadParam *param = (ClientThreadParam*)threadParam;
+  pthread_t threadNumber;
+  ClientThreadParam *param;
+  ClientCleanUpParam clientCleanUpParam;
 
-  if(pthread_mutex_lock(&(param->this_->work_list_lock_)) != 0)
+  param = (ClientThreadParam*)threadParam;
+
+  //build the ClientCleanUpParam to clientCleanUp
+  threadNumber = pthread_self();  
+  clientCleanUpParam.this_ = param->this_;
+  clientCleanUpParam.threadNumber_ = threadNumber;
+
+  pthread_cleanup_push(param->this_->clientCleanUp,
+                      (void*)&clientCleanUpParam); 
+
+  //push the ClientThreadInfo to clientThreadList_
+  if(pthread_mutex_lock(&(param->this_->thread_list_lock_)) != 0)
+    error("error in receivePrintRequest::pthread_mutex_lock");
+
+  param->this_->clientThreadList_.push_back(
+  ClientThreadInfo(threadNumber , param->clientFd_));
+
+  if(pthread_mutex_unlock(&(param->this_->thread_list_lock_)) != 0)
+    error("error in receivePrintRequest::pthread_mutex_lock");
+
+  //communicate between print and printd
+  if(pthread_mutex_lock(&(param->this_->job_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
 
   if(param->this_->receivePrintRequest(param->clientFd_) != 0)
@@ -252,10 +329,10 @@ void *PrintDaemon::clientThread(void *threadParam)
   if(param->this_->sendPrintReply(param->clientFd_) != 0)
     error("error in sendPrintReply");
 
-  close(param->clientFd_);
-
-  if(pthread_mutex_unlock(&(param->this_->work_list_lock_)) != 0)
+  if(pthread_mutex_unlock(&(param->this_->job_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
+
+  pthread_cleanup_pop(1);  //clean up the thread
 
   delete param; 
 
@@ -277,15 +354,19 @@ int PrintDaemon::receivePrintRequest(int clientFd)
 
   /*********receive string format PrintRequest*******/
   //build the file name
-  ss<<DIRECTORY<<"/"<<PRINT_REQUEST_DIR<<"/"<<workList_.size();
+  if(pthread_mutex_lock(&job_number_lock_) != 0)  //lock
+    error("error in pthread_mutex_lock");
+
+  ss<<DIRECTORY<<"/"<<PRINT_REQUEST_DIR<<"/"<<jobNumber_;
+
+  if(pthread_mutex_unlock(&job_number_lock_) != 0)  //unlock
+    error("error in pthread_mutex_lock");
+
   fileName = ss.str();
-
   ofstream ofs(fileName.c_str());
-  if(!ofs)
-    error("error in receivePrintRequest::ofs");
+  if(!ofs)  error("error in receivePrintRequest::ofs");
 
-  if((length = read(clientFd , &printRequest , sizeof(printRequest)))
-               < 0)
+  if((length=read(clientFd , &printRequest , sizeof(printRequest)))<0)
     error("error in receivePrintRequest::read");
 
   printRequest.size_ = ntohl(printRequest.size_);
@@ -294,6 +375,9 @@ int PrintDaemon::receivePrintRequest(int clientFd)
   ofs<<printRequest<<endl;
   ofs.close();
 
+  /************push the JobInfo into jobList_***************/
+  jobList_.push_back(JobInfo(this->jobNumber_ , printRequest));
+  /*********************************************************/
   return 0;
 }
 
@@ -311,14 +395,17 @@ int PrintDaemon::receiveFile(int clientFd)
   int c;
 
   //bulid the file name and creat the file
-  ss<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<workList_.size();
+  if(pthread_mutex_lock(&job_number_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
+  ss<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<jobNumber_;
+
+  if(pthread_mutex_unlock(&job_number_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
   fileName = ss.str();
-
-  workList_.push_back(WorkInfo(fileName));
-
   ofstream ofs(fileName.c_str());
-  if(!ofs)
-    error("error in ifs");
+  if(!ofs)  error("error in ifs");
 
   if((clientFp = fdopen(clientFd , "r")) == NULL)
     error("error in fdopen");
@@ -342,13 +429,18 @@ int PrintDaemon::sendPrintReply(int clientFd)
 
   printReply.resultCode_ = htonl(SUCCESS);
 
-  printReply.jobNumber_ = htonl(workList_.size()-1);
+  printReply.jobNumber_ = htonl(jobNumber_);
 
   strcpy(printReply.errorMessage_ , "success");
 
   if(writen(clientFd , &printReply , sizeof(printReply))
      != sizeof(printReply))
     error("error in sendPrintReply::writen");
+
+  //***jobNumber_ update here***/
+  jobNumber_++;
+  //****************************/
+
   return 0;
 }
 
@@ -367,8 +459,7 @@ int PrintDaemon::makeListen()
 
   addressList = getAddrInfo(NULL , IPP_PORT , AI_PASSIVE ,
                             AF_UNSPEC , SOCK_STREAM);
-  if(addressList == NULL)
-    error("error in getAddrInfo");
+  if(addressList == NULL)  error("error in getAddrInfo");
 
   for(address = addressList;address != NULL;address = address->ai_next)
   {

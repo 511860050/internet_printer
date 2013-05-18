@@ -12,9 +12,13 @@ number=$(ls print_file | awk '{count++}END{print count}')
 fileNumber=$(ls file | awk '{count++}END{print count}')
 requestNumber=$(ls request | awk '{count++}END{print count}')
 
+echo "source files's number : $number"
+echo "copy files's number : $fileNumber"
+echo "request files's number : $requestNumber"
+
 if [ $fileNumber -ne $number -o $requestNumber -ne $number ]
   then
-    echo "failure in number"
+    echo "Failure in number"
     exit -1
 fi
 
@@ -27,7 +31,7 @@ pointedFile="../print_file/1.txt"
     diff $fileName $pointedFile
     if [ $? -ne 0 ]
       then
-        echo "failure in contains"
+        echo "Failure in contains"
         exit -1
     fi
    done

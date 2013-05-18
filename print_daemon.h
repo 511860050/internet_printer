@@ -34,45 +34,68 @@
 class PrintDaemon
 {
 private:
-  struct WorkInfo
+  struct JobInfo
   {
-    string fileName_;
+    int jobNumber_;
+    struct PrintRequest printRequest_;
 
-    WorkInfo(string fileName)
-      :fileName_(fileName) {}
+    JobInfo(int jobNumber , struct PrintRequest printRequest)
+      :jobNumber_(jobNumber) ,printRequest_(printRequest) {}
   };
 private:
-  struct ClientThreadParam
+  struct ClientThreadInfo
+  {
+    pthread_t threadNumber_;
+    int clientFd_;
+
+    ClientThreadInfo(pthread_t threadNumber , int clientFd)
+      :threadNumber_(threadNumber) , clientFd_(clientFd) {}
+  };
+private:
+  //using for threadFunction variable
+  struct ClientThreadParam 
   {
     PrintDaemon *this_;
     int clientFd_;
   };
+private:
+  //using for thread_cleanup funcion
+  struct ClientCleanUpParam
+  {
+    PrintDaemon *this_;
+    pthread_t threadNumber_;
+  };
 public:
   PrintDaemon(char *processName);
   ~PrintDaemon();
-
 private:
   void initialize();
-
   void run();
-
   int signalInitialize();
-
   int makeListen();
 
   static void *signalThread(void *printd);
   void signalProcess();
   void killClientThreads();
-  void printWorkList();
+  void printJobList(); 
 
   static void *clientThread(void *threadParam);
   int receivePrintRequest(int clientFd);
   int receiveFile(int clientFd);
   int sendPrintReply(int clientFd);
 
+  static void clientCleanUp(void *clientCleanUpParam); 
+  void clientCleanUp(pthread_t threadNumber);
 private:
-  list<WorkInfo> workList_; //list to hold work informations
-  pthread_mutex_t work_list_lock_;  //thread lock to workList_
+  int jobNumber_;  //number of jobs now
+  pthread_mutex_t job_number_lock_; //thread lock to jobNumber_
+
+  list<JobInfo> jobList_; //list to hold job informations
+  pthread_mutex_t job_list_lock_;  //thread lock to jobkList_
+
+  //list to hold thread information
+  list<ClientThreadInfo> clientThreadList_; 
+  pthread_mutex_t thread_list_lock_;  //thred lock to threadList_
 
   int reConfigure_; //RE_READ configure file in communcate with printer
   pthread_mutex_t re_configure_lock_; //thread lock to reRead_;
