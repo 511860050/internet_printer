@@ -83,6 +83,7 @@ private:
   int receivePrintRequest(int clientFd);
   int receiveFile(int clientFd);
   int sendPrintReply(int clientFd);
+  void sendErrorReply(int clientFd , const char *errorFile);
 
   static void clientCleanUp(void *clientCleanUpParam); 
   void clientCleanUp(pthread_t threadNumber);

@@ -40,6 +40,8 @@ using namespace std;
 */
 #define SIMPLE_SIZE 150 //simple buffer size to read simple message 
 
+#define MSGLEN_MAX 512
+
 #ifndef HOST_NAME_MAX  
 #define HOST_NAME_MAX 256  //the max length of host name
 #endif

@@ -178,7 +178,10 @@ void PrintDaemon::signalProcess()
       case SIGTERM:
       {
         killClientThreads();
-        syslog(LOG_INFO , "terminatr with signal SIGTERM");
+        if(ERROR_FLAG == LOG_ON)
+          syslog(LOG_INFO , "terminate with signal SIGTERM");
+        else
+          printf("Terminate with signal SIGTERM\n");
         exit(0);
       }
       case SIGUSR1:
@@ -188,7 +191,10 @@ void PrintDaemon::signalProcess()
       }
       default:
       {
-        syslog(LOG_ERR,"unexpected signal happened %m");
+        if(ERROR_FLAG == LOG_ON)
+          syslog(LOG_INFO , "Unknown signal received");
+        else
+          printf("Unknown signal received\n");
         break;
       }
     }
@@ -308,7 +314,6 @@ void *PrintDaemon::clientThread(void *threadParam)
   ClientCleanUpParam clientCleanUpParam;
 
   param = (ClientThreadParam*)threadParam;
-
   //build the ClientCleanUpParam to clientCleanUp
   threadNumber = pthread_self();  
   clientCleanUpParam.this_ = param->this_;
@@ -351,6 +356,33 @@ void *PrintDaemon::clientThread(void *threadParam)
 }
 
 //=============================================
+/***
+*sendErrorReply send the errorMessage(PrintReply)
+*to print
+*/
+void PrintDaemon::sendErrorReply(int clientFd , const char* errorFile)
+{
+  struct PrintReply printReply;
+
+  //build the PrintReply and send to print
+  printReply.jobNumber_ = 0;
+  if(errno != EIO) 
+    printReply.resultCode_ = htonl(errno);
+  else
+    printReply.resultCode_ = htonl(EIO);
+  strncpy(printReply.errorMessage_ , strerror(printReply.resultCode_),
+          MSGLEN_MAX);
+
+  writen(clientFd , &printReply , sizeof(printReply));
+
+  //report the error to server
+  if(ERROR_FLAG == LOG_ON)
+    syslog(LOG_ERR , "error in %s" , errorFile);
+  else
+    printf("error in %s\n" , errorFile);
+}
+
+//=============================================
 /**
 *receivePrintRequest to receive the print request
 *from the print , and to save it in pointed file
@@ -375,11 +407,18 @@ int PrintDaemon::receivePrintRequest(int clientFd)
 
   fileName = ss.str();
   ofstream ofs(fileName.c_str());
-  if(!ofs)  error("error in receivePrintRequest::ofs");
+  if(!ofs) 
+  {
+    sendErrorReply(clientFd , "receivePrintRequest");
+    pthread_exit((void*)1);
+  }
 
   if((length=readnTime(clientFd , &printRequest , 
-      sizeof(printRequest),WAIT_TIME))<0)
-    error("error in receivePrintRequest::read");
+      sizeof(printRequest),WAIT_TIME))  != sizeof(printRequest))
+  {
+    sendErrorReply(clientFd , "receivePrintRequest");
+    pthread_exit((void*)1);
+  }
 
   printRequest.size_ = ntohl(printRequest.size_);
   printRequest.flags_ = ntohl(printRequest.flags_);
@@ -403,21 +442,31 @@ int PrintDaemon::receiveFile(int clientFd)
 {
   FILE *clientFp;
   string fileName;
-  stringstream ss;
+  string requestName;
+  stringstream ss_1;
+  stringstream ss_2;
   int c;
 
   //bulid the file name and creat the file
   if(pthread_mutex_lock(&job_number_lock_) != 0)
     error("error in pthread_mutex_lock");
 
-  ss<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<jobNumber_;
+  ss_1<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<jobNumber_;
+  ss_2<<DIRECTORY<<"/"<<PRINT_REQUEST_DIR<<"/"<<jobNumber_;
 
   if(pthread_mutex_unlock(&job_number_lock_) != 0)
     error("error in pthread_mutex_lock");
 
-  fileName = ss.str();
+  fileName = ss_1.str();
+  requestName = ss_2.str();
+
   ofstream ofs(fileName.c_str());
-  if(!ofs)  error("error in ifs");
+  if(!ofs) 
+  {
+    sendErrorReply(clientFd , "receiveFile");
+    unlink(requestName.c_str()); //remove the request file
+    pthread_exit((void*)1);
+  }
 
   if((clientFp = fdopen(clientFd , "r")) == NULL)
     error("error in fdopen");
@@ -425,6 +474,17 @@ int PrintDaemon::receiveFile(int clientFd)
   while((c = getc(clientFp)) != END_SIGN)
     ofs.put(c);
 
+  //check if error during read file
+  if(c != END_SIGN)
+  {
+    sendErrorReply(clientFd , "receiveFile");
+    //remove the file and the request
+    unlink(fileName.c_str());
+    unlink(requestName.c_str());
+    ofs.close();
+    pthread_exit((void*)1);
+  }
+  
   ofs.close();
 
   return 0;
@@ -437,7 +497,21 @@ int PrintDaemon::receiveFile(int clientFd)
 */
 int PrintDaemon::sendPrintReply(int clientFd)
 {
+  string fileName;
+  string requestName;
+  stringstream ss_1;
+  stringstream ss_2;
   struct PrintReply printReply;
+
+  //bulid the file name and creat the file
+  if(pthread_mutex_lock(&job_number_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
+  ss_1<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<jobNumber_;
+  ss_2<<DIRECTORY<<"/"<<PRINT_REQUEST_DIR<<"/"<<jobNumber_;
+
+  if(pthread_mutex_unlock(&job_number_lock_) != 0)
+    error("error in pthread_mutex_lock");
 
   printReply.resultCode_ = htonl(SUCCESS);
 
@@ -447,12 +521,17 @@ int PrintDaemon::sendPrintReply(int clientFd)
 
   if(writen(clientFd , &printReply , sizeof(printReply))
      != sizeof(printReply))
-    error("error in sendPrintReply::writen");
+  {
+    sendErrorReply(clientFd , "sendPrintReply");
+    //remove the file and the request
+    unlink(fileName.c_str());
+    unlink(requestName.c_str());
+    pthread_exit((void*)1);
+  }
 
   //***jobNumber_ update here***/
   jobNumber_++;
   //****************************/
-
   return 0;
 }
 
