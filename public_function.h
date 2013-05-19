@@ -25,6 +25,7 @@
 #include <syslog.h>
 #include <pthread.h>
 #include <pwd.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -57,6 +58,8 @@ int ERROR_FLAG;
 
 #define RECEIVE_HEAD "%%"
 #define END_SIGN 255 
+
+#define WAIT_TIME 10
 
 //==============================================
 /**
@@ -230,6 +233,74 @@ int readn(int fd , void *line , int size)
   while(left > 0)
   {
     length = read(fd , ptr , left);
+    if(length > 0) 
+    {
+      ptr += length;
+      left -= length;
+    }
+    else if(length == 0) 
+      break;
+    else
+      return -1;
+  }
+  return size-left;
+}
+
+//===================================================
+/**
+*readTime exit when no input after thmeOut second
+*fd : the file descriptor
+*line : buffer to hold the input
+*size : line size
+*timeOut : waiting time
+*return value : the number of char has been read
+*/
+int readTime(int fd , void *line , int size , unsigned int timeOut)
+{
+  int nfds;
+  fd_set readFds;
+  struct timeval theTime;
+
+  theTime.tv_sec = timeOut;
+  theTime.tv_usec = 0;
+
+  FD_ZERO(&readFds);
+  FD_SET(fd , &readFds);
+
+  nfds = select(fd+1 , &readFds , NULL , NULL , &theTime);
+  if(nfds == 0)
+  {
+    errno = ETIME;
+    return -1;
+  }
+  else if(nfds < 0)
+    return -1;
+
+  return (read(fd , line ,size));
+}
+
+//===================================================
+/**
+*readnTime read n chars from fd , no input after timeOut second
+*fd : the file descriptor
+*line : buffer to hold the input
+*size ; number of char to read
+*timeOut : waiting time
+*return value : the number of char has been read
+*/
+int readnTime(int fd , void *line , int size , unsigned int timeOut)
+{
+  int left; //how many char left to read
+  int length;
+  char *ptr;
+
+  ptr = (char *)line;
+
+  left = size;
+  while(left > 0)
+  {
+    //quit after timeOut second no input
+    length = readTime(fd , ptr , left , timeOut); 
     if(length > 0) 
     {
       ptr += length;

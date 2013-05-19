@@ -7,6 +7,8 @@ do
   (./client print_file/$file)&
 done
 
+sleep 1
+
 #check the number of create file 
 number=$(ls print_file | awk '{count++}END{print count}')
 fileNumber=$(ls file | awk '{count++}END{print count}')

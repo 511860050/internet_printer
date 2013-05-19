@@ -118,7 +118,7 @@ int Print::receivePrintReply(int sockFd)
 {
   struct PrintReply printReply;
 
-  if(readn(sockFd , &printReply , sizeof(printReply)) 
+  if(readnTime(sockFd , &printReply , sizeof(printReply) , WAIT_TIME) 
      != sizeof(printReply))
     error("error in receivePrintReply::readn");
 

@@ -201,6 +201,17 @@ void PrintDaemon::signalProcess()
 */
 void PrintDaemon::killClientThreads()
 {
+  if(pthread_mutex_lock(&thread_list_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
+  list<ClientThreadInfo>::iterator iter;
+
+  iter=clientThreadList_.begin();
+  for(;iter != clientThreadList_.end() ; ++iter)
+    pthread_cancel(iter->threadNumber_);
+
+  if(pthread_mutex_unlock(&thread_list_lock_) != 0)
+    error("error in pthread_mutex_unlock");
 }
 
 //============================================
@@ -366,7 +377,8 @@ int PrintDaemon::receivePrintRequest(int clientFd)
   ofstream ofs(fileName.c_str());
   if(!ofs)  error("error in receivePrintRequest::ofs");
 
-  if((length=read(clientFd , &printRequest , sizeof(printRequest)))<0)
+  if((length=readnTime(clientFd , &printRequest , 
+      sizeof(printRequest),WAIT_TIME))<0)
     error("error in receivePrintRequest::read");
 
   printRequest.size_ = ntohl(printRequest.size_);
