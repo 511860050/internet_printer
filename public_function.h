@@ -32,6 +32,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
+#include "ipp_header.h"
+
 using namespace std;
 
 //===============================================
@@ -39,6 +41,8 @@ using namespace std;
 *all kinds of define
 */
 #define SIMPLE_SIZE 150 //simple buffer size to read simple message 
+#define IPP_HEADER_SIZE 512  //buffer size of ipp struct
+#define HTTP_HEADER_SIZE 512  //buffer size of http struct
 
 #define MSGLEN_MAX 512
 
@@ -62,6 +66,11 @@ int ERROR_FLAG;
 #define END_SIGN 255 
 
 #define WAIT_TIME 10
+
+#define PRINTD_PORT "13000"
+#define PRINTER_PORT "14000"
+
+#define LISTEN_QUEUE 50
 
 //==============================================
 /**
@@ -126,6 +135,21 @@ void error(const char* message)
   else
     perror(message);
   exit(-1);
+}
+
+//=============================================
+/**
+*string to int
+*/
+int stringToInt(const char *s)
+{
+  stringstream ss;
+  int number;
+
+  ss<<s;
+  ss>>number;
+
+  return number;
 }
 
 //==============================================
@@ -198,7 +222,6 @@ char *scanConfigFile(const char* fileName , const char* key_)
 
   while(fgets(line , MAX_CONF_LEN , fp) != NULL)
   {
-//    fputs(line , stdout);
     n = sscanf(line , format , key , value);
     if(n == 2 && strcmp(key_ , key) == 0)
     {
@@ -214,6 +237,87 @@ char *scanConfigFile(const char* fileName , const char* key_)
     return value;
   }
   return NULL;
+}
+
+//=============================================
+/**
+*make connect to the pointed hostname
+*2. make socket
+*3. make conenct 
+*return value : the sockFd
+*/
+int makeTcpConnect(char *hostname ,const char *portName )
+{
+  struct addrinfo *printdAddrList;
+  struct addrinfo *printdAddr;
+  int sockFd;
+
+  //get IP address of printd
+  printdAddrList = getAddrInfo(hostname , portName , 
+                  AI_CANONNAME , AF_INET , SOCK_STREAM);
+  //make socket and connect
+  for(printdAddr = printdAddrList ; printdAddr != NULL ; 
+      printdAddr = printdAddr->ai_next)
+  {
+    if((sockFd = socket(printdAddr->ai_family , 
+                 printdAddr->ai_socktype, printdAddr->ai_protocol)) < 0)
+      continue;
+    else if(connect(sockFd,printdAddr->ai_addr,
+            printdAddr->ai_addrlen) < 0)
+    {
+      close(sockFd); //fucking important
+      continue;
+    }
+    else
+    {
+      freeaddrinfo(printdAddrList);
+      return sockFd;
+    }
+  }
+  return -1;
+}
+
+//===========================================
+/**
+*makeListen() to build the tcp socket and allow to listen
+*complete socket , bind and  listen
+*return value : 0 = success
+*/
+int makeTcpListen(const char *portName , int listenQueue)
+{
+  int sockFd;
+  const int on = 1;
+  struct addrinfo* addressList;
+  struct addrinfo* address;
+
+  addressList = getAddrInfo(NULL , portName , AI_PASSIVE ,
+                            AF_UNSPEC , SOCK_STREAM);
+  if(addressList == NULL)  error("error in getAddrInfo");
+
+  for(address = addressList;address != NULL;address = address->ai_next)
+  {
+    if((sockFd = socket(address->ai_family , address->ai_socktype ,
+                 address->ai_protocol)) < 0 )
+      continue;
+    else if(setsockopt(sockFd , SOL_SOCKET , SO_REUSEADDR , &on ,
+            sizeof(on)) == -1)
+    {
+      close(sockFd);
+      continue;
+    }
+    else if(bind(sockFd , address->ai_addr , address->ai_addrlen) != 0)
+    {
+      close(sockFd);
+      continue;
+    }
+    else if(listen(sockFd , listenQueue) != 0)
+    {
+      close(sockFd);
+      continue;
+    }
+    return sockFd;
+  }
+  return -1;
 }
 
 //====================================================
@@ -394,6 +498,167 @@ int initializeDaemon(char *process , int facility)
   ERROR_FLAG = LOG_ON; //set the error to be syslog
 
   return 0;
+}
+
+//=====================================================
+/**
+*Add an option to the IPP header
+*/
+char * addOption(char *cp , int tag , const char *optname , 
+                 const char *optval)
+{
+  int n;
+  union
+  {
+    int16_t s;
+    char c[2];
+  } u;
+  //add the tag
+  *cp++ = tag;
+
+  //add the option name
+  n = strlen(optname);
+  u.s = htons(n);
+  *cp++ = u.c[0];
+  *cp++ = u.c[1];
+  strcpy(cp , optname);
+  cp += n;
+
+  //add the option value
+  n= strlen(optval);
+  u.s = htons(n);
+  *cp++ = u.c[0];
+  *cp++ = u.c[1];
+  strcpy(cp , optval);
+  cp += n;
+
+  return cp;
+}
+
+//=====================================================
+/**
+*set IPP header as binary format
+*ibuf : the ipp buffer to hold the struct
+*requestNumber : the request number of IPP
+*printerName : the printer's name
+*port : the printer's service port
+*/
+int setIPPHeader(char ibuf[] , int requestNumber , char *printerName ,
+                   int port )
+{
+  char *icp;
+  struct ipp_hdr *hp;
+  char uri[SIMPLE_SIZE];
+
+  icp = ibuf;
+  hp = (struct ipp_hdr*)icp;
+
+  hp->major_version = 1;
+  hp->minor_version = 1;
+  hp->operation = htons(OP_PRINT_JOB);
+  hp->request_id = htonl(requestNumber);
+  //build the attribute
+  icp += offsetof(struct ipp_hdr , attr_group);
+  *icp++ = TAG_OPERATION_ATTR;
+  //set char set
+  icp = addOption(icp , TAG_CHARSET , "attributes-charset" , "utf-8");
+  //set language
+  icp=addOption(icp,TAG_NATULANG,"attributes-natural-language","en-us");
+  //set URI
+  sprintf(uri , "http://%s:%d" , printerName , port);
+  icp = addOption(icp , TAG_URI , "printer_uri" , uri);
+  //the end of attribute
+  *icp++ = TAG_END_OF_ATTR;
+
+  //so it is easy to separate from main text
+  *icp++ = '\r'; 
+  *icp++ = '\n';
+
+  *icp++ = '\r'; 
+  *icp++ = '\n';
+  
+  return (icp - ibuf);
+}
+
+//=====================================================
+/**
+*set up HTTP header
+*length : the length of file + IPP_header
+*printerName : the name of printer
+*port : the printer's service port
+*/
+int setupHTTPHeader(char hbuf[] , long length , char *printerName , 
+                    int port)
+{
+  char *hcp;
+  hcp = hbuf;
+
+  sprintf(hcp , "POST /%s/ipp HTTP/1.1\r\n" , printerName);
+  hcp += strlen(hcp);
+
+  sprintf(hcp , "Content-Length: %ld\r\n" , length);
+  hcp += strlen(hcp);
+
+  strcpy(hcp , "Content-Type: application/ipp\r\n");
+  hcp += strlen(hcp);
+
+  sprintf(hcp , "Host: %s:%d\r\n" , printerName , port);
+  hcp += strlen(hcp);
+
+  *hcp++ = '\r';
+  *hcp++ = '\n';
+
+  return (hcp - hbuf);
+}
+
+//=====================================================
+/**
+*set up IPP header as string format
+*ibuf : the ipp buffer to hold the struct
+*requestNumber : the request number of IPP
+*printerName : the printer's name
+*port : the printer's service port
+*/
+int setupIPPHeader(char ibuf[] , int requestNumber , char *printerName ,
+                   int port )
+{
+  char *icp;
+  char uri[SIMPLE_SIZE];
+
+  icp = ibuf;
+
+  sprintf(icp , "major_version: 1\r\n");
+  icp += strlen(icp);
+
+  sprintf(icp , "minor_version: 1\r\n");
+  icp += strlen(icp);
+
+  sprintf(icp , "operation: %d\r\n" , OP_PRINT_JOB);
+  icp += strlen(icp);
+
+  sprintf(icp , "request_id: %d\r\n" , requestNumber);
+  icp += strlen(icp);
+
+  sprintf(icp , "attributes-begin\r\n");
+  icp += strlen(icp);
+
+  sprintf(icp , "attributes-charset: utf-8\r\n");
+  icp += strlen(icp);
+
+  sprintf(icp , "attributes-natural-language: en-us\r\n");
+  icp += strlen(icp);
+
+  sprintf(uri , "http://%s:%d" , printerName , port);
+  sprintf(icp , "attributes-uri: %s\r\n" , uri);
+  icp += strlen(icp);
+
+  sprintf(icp , "attributes-end\r\n");
+  icp += strlen(icp);
+
+  *icp++ = '\r'; 
+  *icp++ = '\n';
+  
+  return (icp - ibuf);
 }
 
 #endif

@@ -58,7 +58,6 @@ void PrintDaemon::initialize()
     error("error in pthread_mutex_init");
 }
 
-
 //===========================================
 /**
 *run to complete the main flow of the print daemon
@@ -74,30 +73,29 @@ void PrintDaemon::run()
   socklen_t clientAddrLen;
   pthread_t thread;
   pthread_t sigThread;
+  pthread_t priThread;
   int *clientFd;
   ClientThreadParam *threadParam;
 
   if(signalInitialize() != 0)
     error("error in signalInitialize");
 
-  if((sockFd = makeListen()) < 0)
+  if((sockFd = makeTcpListen(PRINTD_PORT , LISTEN_QUEUE)) < 0)
     error("error in makeListen");
 
   if(pthread_create(&sigThread,NULL,signalThread, (void*)this) != 0)
     error("error in pthread_create::signalThread");
 
+  if(pthread_create(&priThread ,NULL, printerThread , (void*)this) != 0)
+    error("error in pthread_create");
+
   while(true)
   {
     clientAddrLen = sizeof(clientAddr);
-    /**********this place is fucking important**********/
-    clientFd = new int;
-    if(clientFd == NULL)
-      error("error in new int");
 
+    clientFd = new int;
     threadParam = new ClientThreadParam;
-    if(threadParam == NULL)
-      error("error in new ClientThreadParam");
-    /**********this place is fucking important*********/
+
     if((*clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
       continue;
 
@@ -309,50 +307,58 @@ void PrintDaemon::clientCleanUp(pthread_t threadNumber)
 */
 void *PrintDaemon::clientThread(void *threadParam)
 {
-  pthread_t threadNumber;
   ClientThreadParam *param;
-  ClientCleanUpParam clientCleanUpParam;
 
   param = (ClientThreadParam*)threadParam;
+  param->this_->clientProcess(param->clientFd_);
+
+  delete param;
+  return NULL;
+}
+
+//=============================================
+/**
+*clientProcess to complete the communicate 
+*between print and printed
+*/
+void PrintDaemon::clientProcess(int clientFd )
+{
+  pthread_t threadNumber;
+  ClientCleanUpParam clientCleanUpParam;
+
   //build the ClientCleanUpParam to clientCleanUp
   threadNumber = pthread_self();  
-  clientCleanUpParam.this_ = param->this_;
+  clientCleanUpParam.this_ = this;
   clientCleanUpParam.threadNumber_ = threadNumber;
 
-  pthread_cleanup_push(param->this_->clientCleanUp,
-                      (void*)&clientCleanUpParam); 
+  pthread_cleanup_push(clientCleanUp, (void*)&clientCleanUpParam); 
 
   //push the ClientThreadInfo to clientThreadList_
-  if(pthread_mutex_lock(&(param->this_->thread_list_lock_)) != 0)
+  if(pthread_mutex_lock(&(thread_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
 
-  param->this_->clientThreadList_.push_back(
-  ClientThreadInfo(threadNumber , param->clientFd_));
+  clientThreadList_.push_back(ClientThreadInfo(threadNumber,clientFd));
 
-  if(pthread_mutex_unlock(&(param->this_->thread_list_lock_)) != 0)
+  if(pthread_mutex_unlock(&(thread_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
 
   //communicate between print and printd
-  if(pthread_mutex_lock(&(param->this_->job_list_lock_)) != 0)
+  if(pthread_mutex_lock(&(job_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
 
-  if(param->this_->receivePrintRequest(param->clientFd_) != 0)
+  if(receivePrintRequest(clientFd) != 0)
     error("error in receivePrintRequest");
 
-  if(param->this_->receiveFile(param->clientFd_) != 0)
+  if(receiveFile(clientFd) != 0)
     error("error in receiveFile");
 
-  if(param->this_->sendPrintReply(param->clientFd_) != 0)
+  if(sendPrintReply(clientFd) != 0)
     error("error in sendPrintReply");
 
-  if(pthread_mutex_unlock(&(param->this_->job_list_lock_)) != 0)
+  if(pthread_mutex_unlock(&(job_list_lock_)) != 0)
     error("error in receivePrintRequest::pthread_mutex_lock");
 
   pthread_cleanup_pop(1);  //clean up the thread
-
-  delete param; 
-
-  return NULL;
 }
 
 //=============================================
@@ -535,47 +541,191 @@ int PrintDaemon::sendPrintReply(int clientFd)
   return 0;
 }
 
-//===========================================
+//=============================================
 /**
-*makeListen() to make the Print Daemon process
-*complete socket , bind and  listen
+*printerThread to drive the printerProcess to
+*complete the communication between printer and printd
+*/
+void *PrintDaemon::printerThread(void *printd)
+{
+  PrintDaemon *thisOne;
+
+  thisOne = (PrintDaemon*)printd;
+  thisOne->printerProcess(); 
+  return NULL;
+}
+
+//=============================================
+/**
+*printerProcees to complete the communication
+*between printer and printd
+*/
+void PrintDaemon::printerProcess()
+{
+  int fd, sockFd;
+  int ippLength, httpLength;
+  char *printerName;
+  char ibuf[IPP_HEADER_SIZE];
+  char hbuf[HTTP_HEADER_SIZE];
+  struct JobInfo jobInfo;
+  struct stat fileInfo;
+
+  //get the printer host name
+  if((printerName = getPrinterHostName()) == NULL)
+    error("error in getPrinterHostName");
+
+  while(true)
+  {
+    //get the next Job to print
+    jobInfo = getNextJob();
+    //check for reconstruct the printerName
+    reReadConfigFile(printerName);
+    //open and check print file
+    if((fd = openPrintFile(jobInfo.jobNumber_ , fileInfo)) < 0)
+      error("error in openPrintFile");
+    //make connect to printer
+    if((sockFd = makeTcpConnect(printerName , PRINTER_PORT)) < 0)
+      error("error in makeConnect");
+    //setup IPP header
+    ippLength = setupIPPHeader(ibuf , jobInfo.jobNumber_ , printerName , 
+                              stringToInt(PRINTER_PORT));
+    //setup HTTP header
+    httpLength = setupHTTPHeader(hbuf , ippLength+fileInfo.st_size ,
+                                printerName , stringToInt(PRINTER_PORT));
+    //send the HTTP and IPP header
+    if(writen(sockFd , hbuf , httpLength) != httpLength)
+      error("error in writen::HTTP");
+    if(writen(sockFd , ibuf , ippLength) != ippLength)
+      error("error in writen::IPP");
+    //send the file to printer
+    if(submitFile(fd , sockFd) < 0)
+      error("error in sendFile");
+    if(receivePrinterReply(sockFd) < 0)
+      error("error in receivePrinterReply");
+  }
+}
+
+//=============================================
+/**
+*send the file to printer
 *return value : 0 = success
 */
-int PrintDaemon::makeListen()
+int PrintDaemon::submitFile(int fd , int sockFd)
 {
-  int sockFd;
-  const int on = 1;
-  struct addrinfo* addressList;
-  struct addrinfo* address;
+  FILE *fp;
+  FILE *sockFp;
+  int c;
 
-  addressList = getAddrInfo(NULL , IPP_PORT , AI_PASSIVE ,
-                            AF_UNSPEC , SOCK_STREAM);
-  if(addressList == NULL)  error("error in getAddrInfo");
+  //sumbit the file to printd
+  if((fp = fdopen(fd , "r")) == NULL)
+    error("error in submitFile::fopen");
 
-  for(address = addressList;address != NULL;address = address->ai_next)
+  if((sockFp = fdopen(sockFd , "w")) == NULL)
+    error("error in submitFile::fdopen");
+
+  while((c = getc(fp)) != EOF)
+    fputc(c , sockFp);
+
+  fputc('\r',sockFp);
+  fputc('\n',sockFp);
+  fputc(END_SIGN , sockFp);
+  fflush(sockFp);
+  fclose(fp);
+
+  return 0;
+}
+
+//=============================================
+/**
+*receive the reply from the printer
+*/
+int PrintDaemon::receivePrinterReply(int sockFd)
+{
+  return 0;
+}
+
+//=============================================
+/**
+*openPrintFile to check if the jobNumber's file is exist 
+*return value : file descriptor of the file
+*/
+int PrintDaemon::openPrintFile(int jobNumber , struct stat &fileInfo)
+{
+  stringstream ss;;
+  string fileName;
+
+  ss<<DIRECTORY<<"/"<<PRINT_FILE_DIR<<"/"<<jobNumber;
+  fileName = ss.str();
+
+  if(stat(fileName.c_str() , &fileInfo) != 0)
+    error("error in checkPrintFile::stat");
+
+  return open(fileName.c_str() , O_RDONLY);
+}
+
+//=============================================
+/**
+*read the printd.conf to read the printer hostname
+*/
+char *PrintDaemon::getPrinterHostName()
+{
+  char *printerHostName;
+
+  printerHostName = scanConfigFile(PRINTD_CONFIG_FILE , "printer");
+
+  return printerHostName;
+}
+
+//=============================================
+/**
+*checkConfigFile to check if the config file needed
+*to reread , on recevie signal SIGHUP to reread the 
+*configure file
+*/
+void PrintDaemon::reReadConfigFile(char *printerHostName)
+{
+  if(pthread_mutex_lock(&re_configure_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
+  if(reConfigure_ == RE_READ)
   {
-    if((sockFd = socket(address->ai_family , address->ai_socktype ,
-                 address->ai_protocol)) < 0 )
-      continue;
-    else if(setsockopt(sockFd , SOL_SOCKET , SO_REUSEADDR , &on ,
-            sizeof(on)) == -1)
-    {
-      close(sockFd);
-      continue;
-    }
-    else if(bind(sockFd , address->ai_addr , address->ai_addrlen) != 0)
-    {
-      close(sockFd);
-      continue;
-    }
-    else if(listen(sockFd , LISTEN_QUEUE) != 0)
-    {
-      close(sockFd);
-      continue;
-    }
-    return sockFd;
+    free(printerHostName); //keep free in mind
+
+    if((printerHostName = getPrinterHostName()) != NULL)
+      error("error in reReadConfigFIle::getPrinterHostName");
   }
-  return -1;
+
+  if(pthread_mutex_unlock(&re_configure_lock_) != 0)
+    error("error in pthread_mutex_lock");
+}
+
+//=============================================
+/**
+*getNextJob to get the next job to print
+*return the struct JobInfo 
+*/
+struct PrintDaemon::JobInfo PrintDaemon::getNextJob()
+{
+  struct JobInfo jobInfo;
+
+  while(jobList_.size() == 0)  //waiting until the jobList_.size() != 0
+    ;
+  //get the jobInfo to print
+  if(pthread_mutex_lock(&job_list_lock_) != 0)
+    error("error in pthread_mutex_lock");
+  if(pthread_mutex_lock(&job_number_lock_) != 0)
+    error("error in pthread_mutex_lock");
+
+  jobInfo = jobList_.front();
+  jobList_.erase(jobList_.begin());
+  jobNumber_--;
+
+  if(pthread_mutex_unlock(&job_number_lock_) != 0)
+    error("error in pthread_mutex_unlock");
+  if(pthread_mutex_unlock(&job_list_lock_) != 0)
+    error("error in pthread_mutex_unlock");
+
+  return jobInfo;
 }
 
 //============================================
@@ -583,6 +733,5 @@ int PrintDaemon::makeListen()
 int main(int ac , char *av[])
 {
   PrintDaemon printd(av[0]);
-
   return 0;
 }

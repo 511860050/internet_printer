@@ -18,11 +18,15 @@
 void Print::run()
 {
   int sockFd; 
+  char *printdName;
   
   if(checkFile(fileName_) != 0)
     error("error in checkFile");
 
-  if((sockFd = makeConnectToPrintd()) < 0)
+  if((printdName = getPrintdName()) == NULL)
+    error("error in scanConfigFile");
+
+  if((sockFd = makeTcpConnect(printdName , PRINTD_PORT)) < 0)
     error("error in makeConenctToPrintd");
 
   if(sendPrintRequest(sockFd) < 0)
@@ -159,49 +163,6 @@ int Print::checkFile(char *fileName)
 char *Print::getPrintdName()
 { 
   return scanConfigFile(CONFIG_FILE, PRINTD_NAME);
-}
-
-//============================================
-/**
-*makeConnectToPrintd to make the connect to print daemon
-*1. get the address of printd 
-*2. make socket
-*3. make conenct to printd
-*return value : the sockFd
-*/
-int Print::makeConnectToPrintd()
-{
-  char *printdName;
-  struct addrinfo *printdAddrList;
-  struct addrinfo *printdAddr;
-  int sockFd;
-
-  //get host name of printd
-  if((printdName = getPrintdName()) == NULL)
-    error("error in getPrintdName");
-  //get IP address of printd
-  printdAddrList = getAddrInfo(printdName , IPP_PORT , 
-                  AI_CANONNAME , AF_INET , SOCK_STREAM);
-  //make socket and connect
-  for(printdAddr = printdAddrList ; printdAddr != NULL ; 
-      printdAddr = printdAddr->ai_next)
-  {
-    if((sockFd = socket(printdAddr->ai_family , 
-                 printdAddr->ai_socktype, printdAddr->ai_protocol)) < 0)
-      continue;
-    else if(connect(sockFd,printdAddr->ai_addr,
-            printdAddr->ai_addrlen) < 0)
-    {
-      close(sockFd); //fucking important
-      continue;
-    }
-    else
-    {
-      freeaddrinfo(printdAddrList);
-      return sockFd;
-    }
-  }
-  return -1;
 }
 
 //==================================================
