@@ -23,7 +23,6 @@ void Printer::run()
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
   int fileNumber = 0;
-  stringstream ss;
 
   if((sockFd = makeTcpListen(PRINTER_PORT , LISTEN_QUEUE)) < 0)
     error("error in makeTcpListen");
@@ -36,8 +35,8 @@ void Printer::run()
     if((clientFp = fdopen(clientFd , "r")) == NULL)
       error("error in fdopen");
 
+    stringstream ss;
     ss<<DIRECTORY<<"/"<<fileNumber++;
-    cout<<ss.str()<<endl;
 
     ofstream ofs(ss.str().c_str());
     if(!ofs) error("error in ofs");
