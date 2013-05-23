@@ -20,10 +20,10 @@ class Printer
 public:
   void run();
 private:
-  int receiveHTTPHeader(int clientFd);
-  int receiveIPPHeader(int clientFd);
-  int receiveFile(int clientFd);
-  int sendReply(int clientFd);
+  int receiveHTTPHeader(FILE *clientFp);
+  int receiveIPPHeader(FILE *clientFp);
+  int receiveFile(FILE *clientFp);
+  int sendReply(FILE *clientFp);
 };  //end if Printer
 
 #endif

@@ -626,8 +626,6 @@ int PrintDaemon::submitFile(int fd , int sockFd)
   while((c = getc(fp)) != EOF)
     fputc(c , sockFp);
 
-  fputc('\r',sockFp);
-  fputc('\n',sockFp);
   fputc(END_SIGN , sockFp);
   fflush(sockFp);
   fclose(fp);
@@ -709,7 +707,8 @@ struct PrintDaemon::JobInfo PrintDaemon::getNextJob()
   struct JobInfo jobInfo;
 
   while(jobList_.size() == 0)  //waiting until the jobList_.size() != 0
-    ;
+    sleep(1);
+
   //get the jobInfo to print
   if(pthread_mutex_lock(&job_list_lock_) != 0)
     error("error in pthread_mutex_lock");

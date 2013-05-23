@@ -19,6 +19,7 @@ void Printer::run()
 {
   int sockFd;
   int clientFd;
+  FILE *clientFp;
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
 
@@ -30,29 +31,15 @@ void Printer::run()
     if((clientFd = accept(sockFd , &clientAddr , &clientAddrLen)) < 0)
       error("error in clientFd");
 
-    FILE *clientFp;
-    char line[SIMPLE_SIZE];
-
     if((clientFp = fdopen(clientFd , "r")) == NULL)
       error("error in fdopen");
 
     //read the HTTP Header
-    while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
-          strcmp(line , "\r\n") != 0)
-      cout<<line;
-    cout<<"=========================================="<<endl;
-
+    receiveHTTPHeader(clientFp);
     //read the IPP Header
-    while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
-          strcmp(line , "\r\n") != 0)
-      cout<<line;
-    cout<<"=========================================="<<endl;
-
+    receiveIPPHeader(clientFp);
     //read the file
-    while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
-          strcmp(line , "255") != 0)
-      cout<<line;
-    cout<<"=========================================="<<endl;
+    receiveFile(clientFp);
 
     close(clientFd);
   }
@@ -64,13 +51,9 @@ void Printer::run()
 *The point is what do I use this message for?
 *return value : 0 = success
 */
-int Printer::receiveHTTPHeader(int clientFd)
+int Printer::receiveHTTPHeader(FILE *clientFp)
 {
-  FILE *clientFp;
   char line[SIMPLE_SIZE];
-
-  if((clientFp = fdopen(clientFd , "r")) == NULL)
-    error("error in fdopen");
 
   while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
         strcmp(line , "\r\n") != 0)
@@ -84,13 +67,9 @@ int Printer::receiveHTTPHeader(int clientFd)
 *receiveHeader to receive the IPP header from printd
 *return value : 0 = success
 */
-int Printer::receiveIPPHeader(int clientFd)
+int Printer::receiveIPPHeader(FILE *clientFp)
 {
-  FILE *clientFp;
   char line[SIMPLE_SIZE];
-
-  if((clientFp = fdopen(clientFd , "r")) == NULL)
-    error("error in fdopen");
 
   while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
         strcmp(line , "\r\n") != 0)
@@ -104,17 +83,12 @@ int Printer::receiveIPPHeader(int clientFd)
 *receiveFile to receive the main text of HTTP
 *return value : 0 = success
 */
-int Printer::receiveFile(int clientFd)
+int Printer::receiveFile(FILE *clientFp)
 {
-  FILE *clientFp;
-  char line[SIMPLE_SIZE];
+  int c;
 
-  if((clientFp = fdopen(clientFd , "r")) == NULL)
-    error("error in fdopen");
-
-  while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
-        strcmp(line , "255") == 0) ;
-  cout<<line; 
+  while((c = getc(clientFp)) != END_SIGN)
+    cout<<char(c);
 
   return 0;
 }
