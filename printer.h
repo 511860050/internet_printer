@@ -10,6 +10,8 @@
 
 #include "public_function.h"
 
+#define DIRECTORY "/home/chenhuan/Hello_World/internet_print/printer"
+
 //============================================
 /**
 *the class of Printer
@@ -20,9 +22,9 @@ class Printer
 public:
   void run();
 private:
-  int receiveHTTPHeader(FILE *clientFp);
-  int receiveIPPHeader(FILE *clientFp);
-  int receiveFile(FILE *clientFp);
+  int receiveHTTPHeader(FILE *clientFp , ofstream &ofs);
+  int receiveIPPHeader(FILE *clientFp , ofstream &ofs);
+  int receiveFile(FILE *clientFp , ofstream &ofs);
   int sendReply(FILE *clientFp);
 };  //end if Printer
 

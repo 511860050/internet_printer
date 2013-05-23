@@ -1,0 +1,41 @@
+POST /10.12.11.241/ipp HTTP/1.1
+Content-Length: 1165
+Content-Type: application/ipp
+Host: 10.12.11.241:14000
+major_version: 1
+minor_version: 1
+operation: 2
+request_id: 0
+attributes-begin
+attributes-charset: utf-8
+attributes-natural-language: en-us
+attributes-uri: http://10.12.11.241:14000
+attributes-end
+It is the last example in <<APUE>>, and also a good example for myself.
+
+#------------------------------------------------------------
+fileName : public_function.h  
+describe : contains the functions that used in common
+
+(1)error : send error message then exit;
+(2)sig_chld : deal with the signal SIGCHLD;
+(3)getAddrInfo : get the IP address informaion of host;
+(4)scanConfigFile : read the key-value pair;
+(5)readn : read n bytes;
+(6)writen : write n bytes;
+
+#------------------------------------------------------------
+fileName : print.h
+describe : the declaration of Print
+
+#------------------------------------------------------------
+fileName : print.cpp
+describe : the definition of Print
+
+#------------------------------------------------------------
+fileName : print_daemon.h
+describe : the definition of PrintDaemon
+
+#------------------------------------------------------------
+fileName : print_daemon.cpp
+describe : the definition of PrintDaemon

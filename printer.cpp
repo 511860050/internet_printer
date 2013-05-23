@@ -22,6 +22,8 @@ void Printer::run()
   FILE *clientFp;
   struct sockaddr clientAddr;
   socklen_t clientAddrLen;
+  int fileNumber = 0;
+  stringstream ss;
 
   if((sockFd = makeTcpListen(PRINTER_PORT , LISTEN_QUEUE)) < 0)
     error("error in makeTcpListen");
@@ -34,14 +36,21 @@ void Printer::run()
     if((clientFp = fdopen(clientFd , "r")) == NULL)
       error("error in fdopen");
 
+    ss<<DIRECTORY<<"/"<<fileNumber++;
+    cout<<ss.str()<<endl;
+
+    ofstream ofs(ss.str().c_str());
+    if(!ofs) error("error in ofs");
+
     //read the HTTP Header
-    receiveHTTPHeader(clientFp);
+    receiveHTTPHeader(clientFp , ofs);
     //read the IPP Header
-    receiveIPPHeader(clientFp);
+    receiveIPPHeader(clientFp , ofs);
     //read the file
-    receiveFile(clientFp);
+    receiveFile(clientFp , ofs);
 
     close(clientFd);
+    ofs.close();
   }
 }
 
@@ -51,13 +60,13 @@ void Printer::run()
 *The point is what do I use this message for?
 *return value : 0 = success
 */
-int Printer::receiveHTTPHeader(FILE *clientFp)
+int Printer::receiveHTTPHeader(FILE *clientFp , ofstream &ofs)
 {
   char line[SIMPLE_SIZE];
 
   while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
         strcmp(line , "\r\n") != 0)
-    cout<<line;
+    ofs<<line;
 
   return 0;
 }
@@ -67,13 +76,13 @@ int Printer::receiveHTTPHeader(FILE *clientFp)
 *receiveHeader to receive the IPP header from printd
 *return value : 0 = success
 */
-int Printer::receiveIPPHeader(FILE *clientFp)
+int Printer::receiveIPPHeader(FILE *clientFp , ofstream &ofs)
 {
   char line[SIMPLE_SIZE];
 
   while(fgets(line , SIMPLE_SIZE , clientFp) != NULL && 
         strcmp(line , "\r\n") != 0)
-    cout<<line;
+    ofs<<line;
 
   return 0;
 }
@@ -83,12 +92,12 @@ int Printer::receiveIPPHeader(FILE *clientFp)
 *receiveFile to receive the main text of HTTP
 *return value : 0 = success
 */
-int Printer::receiveFile(FILE *clientFp)
+int Printer::receiveFile(FILE *clientFp , ofstream &ofs)
 {
   int c;
 
   while((c = getc(clientFp)) != END_SIGN)
-    cout<<char(c);
+    ofs<<char(c);
 
   return 0;
 }
